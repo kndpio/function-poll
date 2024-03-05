@@ -37,13 +37,6 @@ type EmployeeRef struct {
 	Status string `json:"status"`
 }
 
-type Unstructured struct {
-	APIVersion string                 `json:"apiVersion"`
-	Kind       string                 `json:"kind"`
-	Metadata   map[string]interface{} `json:"metadata"`
-	Spec       map[string]interface{} `json:"spec"`
-}
-
 // Function returns whatever response you ask it to.
 type Function struct {
 	fnv1beta1.UnimplementedFunctionRunnerServiceServer
@@ -52,6 +45,101 @@ type Function struct {
 
 var api = slack.New(os.Getenv("SLACK_API_TOKEN"))
 var channelID = os.Getenv("SLACK_NOTIFY_CHANNEL_ID")
+
+func timeElapsed(xr *resource.Composite, rsp *fnv1beta1.RunFunctionResponse) bool {
+	currentTime := int(time.Now().Unix())
+
+	annotations := xr.Resource.GetAnnotations()
+	lastSentMessage, _ := strconv.Atoi(annotations["last-sent-message"])
+
+	if annotations["last-sent-message"] == "" || currentTime >= lastSentMessage+900 {
+		if annotations["last-sent-message"] == "" {
+			annotations["last-sent-message"] = strconv.Itoa(currentTime)
+		}
+		lastSentMessage = currentTime
+		annotations["last-sent-message"] = strconv.Itoa(lastSentMessage)
+		xr.Resource.SetAnnotations(annotations)
+		response.SetDesiredCompositeResource(rsp, xr)
+		return true
+	}
+	xr.Resource.SetAnnotations(annotations)
+	response.SetDesiredCompositeResource(rsp, xr)
+	return false
+}
+
+func userVoted(employeeRefs []string, userName string) bool {
+	// Check if the user should receive a message based on status
+	for _, employeeRef := range employeeRefs {
+		if string(employeeRef[0]) == userName {
+			return string(employeeRef[1]) == ""
+		}
+	}
+	return true
+}
+
+func sendSlackMessage(xr *resource.Composite) {
+	members, _, err := api.GetUsersInConversation(&slack.GetUsersInConversationParameters{
+		ChannelID: channelID,
+	})
+	if err != nil {
+		log.Fatalf("Error getting conversation members: %v", err)
+	}
+
+	fmt.Println("Conversation Members:", members)
+	pollName, _ := xr.Resource.GetString("metadata.name")
+	pollTitle, _ := xr.Resource.GetString("spec.Title")
+	pollEmployeeRefs, _ := xr.Resource.GetStringArray("spec.employeeRefs")
+	for _, memberID := range members {
+		userInfo, err := api.GetUserInfo(memberID)
+		if err != nil {
+			log.Printf("Error getting user info for %s: %v", memberID, err)
+			continue
+		}
+
+		attachment := slack.Attachment{
+			Color:         "#f9a41b",
+			Fallback:      "",
+			CallbackID:    pollName,
+			AuthorID:      "",
+			AuthorName:    "",
+			AuthorSubname: "",
+			AuthorLink:    "",
+			AuthorIcon:    "",
+			Title:         pollTitle,
+			TitleLink:     pollTitle,
+			Pretext:       "",
+			Text:          os.Getenv("SLACK_NOTIFY_MESSAGE"),
+			ImageURL:      "",
+			ThumbURL:      "",
+			ServiceName:   "",
+			ServiceIcon:   "",
+			FromURL:       "",
+			OriginalURL:   "",
+			Fields:        []slack.AttachmentField{},
+			Actions:       []slack.AttachmentAction{{Name: "actionSelect", Type: "select", Options: []slack.AttachmentActionOption{{Text: "Yes", Value: "Yes"}, {Text: "No", Value: "No"}}}, {Name: "actionCancel", Text: "Cancel", Type: "button", Style: "danger"}},
+			MarkdownIn:    []string{},
+			Blocks:        slack.Blocks{},
+			Footer:        "",
+			FooterIcon:    "",
+			Ts:            "",
+		}
+
+		if userVoted(pollEmployeeRefs, userInfo.Name) {
+			channelID, _, err := api.PostMessage(
+				userInfo.ID,
+				slack.MsgOptionText("", true),
+				slack.MsgOptionAttachments(attachment),
+				slack.MsgOptionAsUser(true),
+			)
+			if err != nil {
+				log.Printf("Error sending message to user %s (%s): %v", userInfo.Name, userInfo.ID, err)
+				continue
+			}
+
+			fmt.Printf("Message sent to user %s (%s) in channel %s\n", userInfo.Name, userInfo.ID, channelID)
+		}
+	}
+}
 
 // RunFunction adds a Deployment and the new object template to the desired state.
 func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequest) (*fnv1beta1.RunFunctionResponse, error) {
@@ -148,11 +236,11 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 
 		fmt.Println("DueOrderTime is passed due, send results in slack chanel")
 	} else {
-		desired, err := request.GetDesiredComposedResources(req)
-		if err != nil {
-			response.Fatal(rsp, errors.Wrapf(err, "cannot get desired resources from %T", req))
-			return rsp, nil
+
+		if timeElapsed(xr, rsp) {
+			sendSlackMessage(xr)
 		}
+
 		mealServicePort, _ := strconv.Atoi(os.Getenv("MEAL_SERVICE_PORT"))
 		mealServiceTargetPort, _ := strconv.Atoi(os.Getenv("MEAL_SERVICE_TARGET_PORT"))
 		ingressTemplate := map[string]interface{}{
@@ -235,50 +323,6 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 			},
 		}
 
-		cronJobTemplate := map[string]interface{}{
-			"apiVersion": "kubernetes.crossplane.io/v1alpha1",
-			"kind":       "Object",
-			"metadata": map[string]interface{}{
-				"name": os.Getenv("CRONJOB_NAME"),
-			},
-			"spec": map[string]interface{}{
-				"forProvider": map[string]interface{}{
-					"manifest": map[string]interface{}{
-						"apiVersion": "batch/v1",
-						"kind":       "CronJob",
-						"metadata": map[string]interface{}{
-							"name":      os.Getenv("CRONJOB_NAME"),
-							"namespace": "default",
-						},
-						"spec": map[string]interface{}{
-							"schedule": os.Getenv("CRONJOB_SCHEDULE_TIME"),
-							"jobTemplate": map[string]interface{}{
-								"spec": map[string]interface{}{
-									"template": map[string]interface{}{
-										"spec": map[string]interface{}{
-											"serviceAccountName": os.Getenv("CRONJOB_SERVICE_ACCOUNT_NAME"),
-											"containers": []map[string]interface{}{
-												{
-													"name":  "meal-container",
-													"image": os.Getenv("CRONJOB_IMAGE_NAME"),
-													"envFrom": []map[string]interface{}{
-														{"configMapRef": map[string]interface{}{"name": "meal-cm"}},
-													},
-												},
-											},
-											"restartPolicy": "OnFailure",
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-				"managementPolicy":  "Default",
-				"providerConfigRef": map[string]interface{}{"name": os.Getenv("PROVIDER_CONFIG_REF_NAME")},
-			},
-		}
-
 		deploymentTemplate := map[string]interface{}{
 			"apiVersion": "kubernetes.crossplane.io/v1alpha1",
 			"kind":       "Object",
@@ -332,9 +376,14 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 				"providerConfigRef": map[string]interface{}{"name": os.Getenv("PROVIDER_CONFIG_REF_NAME")},
 			},
 		}
+		desired, err := request.GetDesiredComposedResources(req)
 
+		if err != nil {
+			response.Fatal(rsp, errors.Wrapf(err, "cannot get desired resources from %T", req))
+			return rsp, nil
+		}
 		// List of templates
-		templates := []map[string]interface{}{deploymentTemplate, ingressTemplate, cronJobTemplate, serviceTemplate}
+		templates := []map[string]interface{}{deploymentTemplate, ingressTemplate, serviceTemplate}
 
 		// Process each template
 		for _, template := range templates {
@@ -353,7 +402,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 			return rsp, nil
 		}
 
-		f.log.Info("Added Deployment, Ingress, and CronJob templates to desired state")
+		f.log.Info("Added Deployment and  Ingress templates to desired state")
 
 	}
 	return rsp, nil
