@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	v1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
 	"github.com/crossplane/function-sdk-go/errors"
 	"github.com/crossplane/function-sdk-go/logging"
 	fnv1beta1 "github.com/crossplane/function-sdk-go/proto/v1beta1"
@@ -17,6 +18,7 @@ import (
 	"github.com/crossplane/function-sdk-go/resource/composed"
 	"github.com/crossplane/function-sdk-go/response"
 	"github.com/slack-go/slack"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -138,11 +140,13 @@ func sendSlackMessage(xr *resource.Composite) {
 
 			fmt.Printf("Message sent to user %s (%s) in channel %s\n", userInfo.Name, userInfo.ID, channelID)
 		}
+
 	}
 }
 
 // RunFunction adds a Deployment and the new object template to the desired state.
 func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequest) (*fnv1beta1.RunFunctionResponse, error) {
+	var conditionStatus corev1.ConditionStatus
 	rsp := response.To(req, response.DefaultTTL)
 	xr, err := request.GetObservedCompositeResource(req)
 	if err != nil {
@@ -178,6 +182,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 	fmt.Println("Votes: ", len(employers), "from ", len(realUsers))
 	fmt.Println("DueOrderTime: ", dueOrderTime, "CurrentTimestamp: ", currentTimestamp)
 	if currentTimestamp >= dueOrderTime || len(employers) == len(realUsers) {
+		conditionStatus = corev1.ConditionTrue
 
 		jobTemplate := map[string]interface{}{
 			"apiVersion": "kubernetes.crossplane.io/v1alpha1",
@@ -235,7 +240,10 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 		}
 
 		fmt.Println("DueOrderTime is passed due, send results in slack chanel")
+		xr.Resource.SetConditions(v1.Condition{Type: v1.TypeSynced, Status: corev1.ConditionTrue})
+		response.SetDesiredCompositeResource(rsp, xr)
 	} else {
+		conditionStatus = corev1.ConditionFalse
 
 		if timeElapsed(xr, rsp) {
 			sendSlackMessage(xr)
@@ -403,7 +411,9 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 		}
 
 		f.log.Info("Added Deployment and  Ingress templates to desired state")
-
 	}
+
+	xr.Resource.SetConditions(v1.Condition{Type: v1.TypeSynced, Status: conditionStatus})
+	response.SetDesiredCompositeResource(rsp, xr)
 	return rsp, nil
 }
