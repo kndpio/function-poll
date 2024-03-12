@@ -18,21 +18,22 @@ import (
 	"github.com/crossplane/function-sdk-go/response"
 	"github.com/slack-go/slack"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
-type Meal struct {
+type poll struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 	Spec              struct {
 		DeliveryTime string        `json:"deliveryTime"`
 		DueOrderTime string        `json:"dueOrderTime"`
 		DueTakeTime  string        `json:"dueTakeTime"`
-		EmployeeRefs []EmployeeRef `json:"employeeRefs"`
+		EmployeeRefs []employeeRef `json:"employeeRefs"`
 		Status       string        `json:"status"`
 	} `json:"spec"`
 }
 
-type EmployeeRef struct {
+type employeeRef struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
 }
@@ -46,49 +47,61 @@ type Function struct {
 var api = slack.New(os.Getenv("SLACK_API_TOKEN"))
 var channelID = os.Getenv("SLACK_NOTIFY_CHANNEL_ID")
 
+// Checking if time passed before sending new message
 func timeElapsed(xr *resource.Composite, rsp *fnv1beta1.RunFunctionResponse) bool {
 	currentTime := int(time.Now().Unix())
 
 	annotations := xr.Resource.GetAnnotations()
-	lastSentMessage, _ := strconv.Atoi(annotations["last-sent-message"])
+	lastSentMessage, _ := strconv.Atoi(annotations["poll.fn.kndp.io/last-sent-time"])
 
-	if annotations["last-sent-message"] == "" || currentTime >= lastSentMessage+900 {
-		if annotations["last-sent-message"] == "" {
-			annotations["last-sent-message"] = strconv.Itoa(currentTime)
+	if annotations["poll.fn.kndp.io/last-sent-time"] == "" || currentTime >= lastSentMessage+900 {
+		if annotations["poll.fn.kndp.io/last-sent-time"] == "" {
+			annotations["poll.fn.kndp.io/last-sent-time"] = strconv.Itoa(currentTime)
 		}
 		lastSentMessage = currentTime
-		annotations["last-sent-message"] = strconv.Itoa(lastSentMessage)
+		annotations["poll.fn.kndp.io/last-sent-time"] = strconv.Itoa(lastSentMessage)
 		xr.Resource.SetAnnotations(annotations)
-		response.SetDesiredCompositeResource(rsp, xr)
+		err := response.SetDesiredCompositeResource(rsp, xr)
+		if err != nil {
+			fmt.Println(err)
+		}
 		return true
 	}
 	xr.Resource.SetAnnotations(annotations)
-	response.SetDesiredCompositeResource(rsp, xr)
+	err := response.SetDesiredCompositeResource(rsp, xr)
+	if err != nil {
+		fmt.Println(err)
+	}
 	return false
 }
 
-func userVoted(employeeRefs []string, userName string) bool {
-	// Check if the user should receive a message based on status
+// Check if the user should receive a message based on status
+func userVoted(employeeRefs []employeeRef, userName string) bool {
 	for _, employeeRef := range employeeRefs {
-		if string(employeeRef[0]) == userName {
-			return string(employeeRef[1]) == ""
+		if employeeRef.Name == userName {
+			return employeeRef.Status == ""
 		}
 	}
 	return true
 }
 
+// Function for sending messages to users in slack
 func sendSlackMessage(xr *resource.Composite) {
 	members, _, err := api.GetUsersInConversation(&slack.GetUsersInConversationParameters{
 		ChannelID: channelID,
 	})
 	if err != nil {
-		log.Fatalf("Error getting conversation members: %v", err)
+		fmt.Printf("Error getting conversation members: %v", err)
 	}
 
 	fmt.Println("Conversation Members:", members)
 	pollName, _ := xr.Resource.GetString("metadata.name")
 	pollTitle, _ := xr.Resource.GetString("spec.Title")
-	pollEmployeeRefs, _ := xr.Resource.GetStringArray("spec.employeeRefs")
+	poll := poll{}
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(xr.Resource.Object, poll); err != nil {
+		fmt.Println("error converting Unstructured to Meal:", err)
+	}
+
 	for _, memberID := range members {
 		userInfo, err := api.GetUserInfo(memberID)
 		if err != nil {
@@ -124,7 +137,7 @@ func sendSlackMessage(xr *resource.Composite) {
 			Ts:            "",
 		}
 
-		if userVoted(pollEmployeeRefs, userInfo.Name) {
+		if userVoted(poll.Spec.EmployeeRefs, userInfo.Name) {
 			channelID, _, err := api.PostMessage(
 				userInfo.ID,
 				slack.MsgOptionText("", true),
@@ -154,7 +167,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 		ChannelID: channelID,
 	})
 	if err != nil {
-		log.Fatalf("Error getting conversation members: %v", err)
+		fmt.Printf("Error getting conversation members: %v", err)
 	}
 
 	realUsers := make([]string, 0)
@@ -200,10 +213,10 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 									"serviceAccountName": os.Getenv("JOB_SERVICE_ACCOUNT_NAME"),
 									"containers": []map[string]interface{}{
 										{
-											"name":  "meal-container",
+											"name":  "poll-container",
 											"image": os.Getenv("JOB_IMAGE_NAME"),
 											"envFrom": []map[string]interface{}{
-												{"configMapRef": map[string]interface{}{"name": "meal-cm"}},
+												{"configMapRef": map[string]interface{}{"name": "poll-cm"}},
 											},
 										},
 									},
@@ -219,8 +232,14 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 		}
 
 		unstructuredData := composed.Unstructured{}
-		unstructuredDataByte, _ := json.Marshal(jobTemplate)
-		json.Unmarshal(unstructuredDataByte, &unstructuredData)
+		unstructuredDataByte, err := json.Marshal(jobTemplate)
+		if err != nil {
+			fmt.Println(err)
+		}
+		err = json.Unmarshal(unstructuredDataByte, &unstructuredData)
+		if err != nil {
+			fmt.Println(err)
+		}
 		desired, err := request.GetDesiredComposedResources(req)
 
 		if err != nil {
@@ -236,13 +255,11 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 
 		fmt.Println("DueOrderTime is passed due, send results in slack chanel")
 	} else {
-
 		if timeElapsed(xr, rsp) {
 			sendSlackMessage(xr)
 		}
-
-		mealServicePort, _ := strconv.Atoi(os.Getenv("MEAL_SERVICE_PORT"))
-		mealServiceTargetPort, _ := strconv.Atoi(os.Getenv("MEAL_SERVICE_TARGET_PORT"))
+		pollServicePort, _ := strconv.Atoi(os.Getenv("POLL_SERVICE_PORT"))
+		pollServiceTargetPort, _ := strconv.Atoi(os.Getenv("POLL_SERVICE_TARGET_PORT"))
 		ingressTemplate := map[string]interface{}{
 			"apiVersion": "kubernetes.crossplane.io/v1alpha1",
 			"kind":       "Object",
@@ -269,9 +286,9 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 												"path":     "/",
 												"backend": map[string]interface{}{
 													"service": map[string]interface{}{
-														"name": os.Getenv("MEAL_SERVICE_NAME"),
+														"name": os.Getenv("POLL_SERVICE_NAME"),
 														"port": map[string]interface{}{
-															"number": mealServicePort,
+															"number": pollServicePort,
 														},
 													},
 												},
@@ -292,7 +309,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 			"apiVersion": "kubernetes.crossplane.io/v1alpha1",
 			"kind":       "Object",
 			"metadata": map[string]interface{}{
-				"name": os.Getenv("MEAL_SERVICE_NAME"),
+				"name": os.Getenv("POLL_SERVICE_NAME"),
 			},
 			"spec": map[string]interface{}{
 				"forProvider": map[string]interface{}{
@@ -300,18 +317,18 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 						"apiVersion": "v1",
 						"kind":       "Service",
 						"metadata": map[string]interface{}{
-							"name":      os.Getenv("MEAL_SERVICE_NAME"),
+							"name":      os.Getenv("POLL_SERVICE_NAME"),
 							"namespace": "default",
 						},
 						"spec": map[string]interface{}{
 							"selector": map[string]interface{}{
-								"app": "meal",
+								"app": "poll",
 							},
 							"ports": []map[string]interface{}{
 								{
 									"protocol":   "TCP",
-									"port":       mealServicePort,
-									"targetPort": mealServiceTargetPort,
+									"port":       pollServicePort,
+									"targetPort": pollServiceTargetPort,
 								},
 							},
 							"type": "ClusterIP",
@@ -342,20 +359,20 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 							"replicas": 1,
 							"selector": map[string]interface{}{
 								"matchLabels": map[string]interface{}{
-									"app": "meal",
+									"app": "poll",
 								},
 							},
 							"template": map[string]interface{}{
 								"metadata": map[string]interface{}{
 									"labels": map[string]interface{}{
-										"app": "meal",
+										"app": "poll",
 									},
 								},
 								"spec": map[string]interface{}{
 									"serviceAccountName": os.Getenv("DEPLOYMENT_SERVICE_ACCOUNT_NAME"),
 									"containers": []map[string]interface{}{
 										{
-											"name":  "meal-container",
+											"name":  "poll-container",
 											"image": os.Getenv("DEPLOYMENT_IMAGE_NAME"),
 											"envFrom": []map[string]interface{}{
 												{"configMapRef": map[string]interface{}{"name": os.Getenv("CONFIG_MAP_NAME")}},
@@ -393,7 +410,10 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 				response.Fatal(rsp, errors.Wrapf(err, "error marshaling Unstructured data: %s", err))
 				return rsp, nil
 			}
-			json.Unmarshal(unstructuredDataByte, &unstructuredData)
+			err = json.Unmarshal(unstructuredDataByte, &unstructuredData)
+			if err != nil {
+				fmt.Println(err)
+			}
 			desired[resource.Name(template["metadata"].(map[string]interface{})["name"].(string))] = &resource.DesiredComposed{Resource: &unstructuredData}
 		}
 
