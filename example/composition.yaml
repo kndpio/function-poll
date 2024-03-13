@@ -12,6 +12,16 @@ spec:
     functionRef:
       name: function-template-go
     input:
-      apiVersion: template.fn.crossplane.io/v1beta1
-      kind: Input
-      example: "Hello world"
+      slackApiToken: "apikey"
+      slackNotifyMessage: "Order something?"
+      slackChanelID: "chanelid"
+      pollServiceName: ""
+      pollServicePort: 80
+      pollServiceTargetPort: 80
+      ingressName: ""
+      ingressHostName: ""
+      providerConfigRef: ""
+      deploymentName: ""
+      deploymentServiceAccount: ""
+      deploymentImage: ""
+      configMap: ""

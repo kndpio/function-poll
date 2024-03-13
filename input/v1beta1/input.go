@@ -22,6 +22,17 @@ type Input struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	// Example is an example field. Replace it with whatever input you need. :)
-	Example string `json:"example"`
+	SlackApiToken            string `json:"slackApiToken"`
+	SlackNotifyMessage       string `json:"slackNotifyMessage"`
+	SlackChanelID            string `json:"slackChanelID"`
+	PollServiceName          string `json:"pollServiceName"`
+	PollServicePort          int    `json:"pollServicePort"`
+	PollServiceTargetPort    int    `json:"pollServiceTargetPort"`
+	IngressName              string `json:"ingressName"`
+	IngressHostName          string `json:"ingressHostName"`
+	ProviderConfigRef        string `json:"providerConfigRef"`
+	DeploymentName           string `json:"deploymentName"`
+	DeploymentServiceAccount string `json:"deploymentServiceAccount"`
+	DeploymentImage          string `json:"deploymentImage"`
+	ConfigMap                string `json:"configMap"`
 }
