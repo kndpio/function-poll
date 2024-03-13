@@ -22,7 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-type Meal struct {
+type Poll struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 	Spec              struct {
@@ -205,10 +205,10 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 									"serviceAccountName": os.Getenv("JOB_SERVICE_ACCOUNT_NAME"),
 									"containers": []map[string]interface{}{
 										{
-											"name":  "meal-container",
+											"name":  "poll-container",
 											"image": os.Getenv("JOB_IMAGE_NAME"),
 											"envFrom": []map[string]interface{}{
-												{"configMapRef": map[string]interface{}{"name": "meal-cm"}},
+												{"configMapRef": map[string]interface{}{"name": "poll-cm"}},
 											},
 										},
 									},
@@ -249,8 +249,8 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 			sendSlackMessage(xr)
 		}
 
-		mealServicePort, _ := strconv.Atoi(os.Getenv("MEAL_SERVICE_PORT"))
-		mealServiceTargetPort, _ := strconv.Atoi(os.Getenv("MEAL_SERVICE_TARGET_PORT"))
+		pollServicePort, _ := strconv.Atoi(os.Getenv("POLL_SERVICE_PORT"))
+		pollServiceTargetPort, _ := strconv.Atoi(os.Getenv("POLL_SERVICE_TARGET_PORT"))
 		ingressTemplate := map[string]interface{}{
 			"apiVersion": "kubernetes.crossplane.io/v1alpha1",
 			"kind":       "Object",
@@ -277,9 +277,9 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 												"path":     "/",
 												"backend": map[string]interface{}{
 													"service": map[string]interface{}{
-														"name": os.Getenv("MEAL_SERVICE_NAME"),
+														"name": os.Getenv("POLL_SERVICE_NAME"),
 														"port": map[string]interface{}{
-															"number": mealServicePort,
+															"number": pollServicePort,
 														},
 													},
 												},
@@ -300,7 +300,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 			"apiVersion": "kubernetes.crossplane.io/v1alpha1",
 			"kind":       "Object",
 			"metadata": map[string]interface{}{
-				"name": os.Getenv("MEAL_SERVICE_NAME"),
+				"name": os.Getenv("POLL_SERVICE_NAME"),
 			},
 			"spec": map[string]interface{}{
 				"forProvider": map[string]interface{}{
@@ -308,18 +308,18 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 						"apiVersion": "v1",
 						"kind":       "Service",
 						"metadata": map[string]interface{}{
-							"name":      os.Getenv("MEAL_SERVICE_NAME"),
+							"name":      os.Getenv("POLL_SERVICE_NAME"),
 							"namespace": "default",
 						},
 						"spec": map[string]interface{}{
 							"selector": map[string]interface{}{
-								"app": "meal",
+								"app": "poll",
 							},
 							"ports": []map[string]interface{}{
 								{
 									"protocol":   "TCP",
-									"port":       mealServicePort,
-									"targetPort": mealServiceTargetPort,
+									"port":       pollServicePort,
+									"targetPort": pollServiceTargetPort,
 								},
 							},
 							"type": "ClusterIP",
@@ -350,20 +350,20 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 							"replicas": 1,
 							"selector": map[string]interface{}{
 								"matchLabels": map[string]interface{}{
-									"app": "meal",
+									"app": "poll",
 								},
 							},
 							"template": map[string]interface{}{
 								"metadata": map[string]interface{}{
 									"labels": map[string]interface{}{
-										"app": "meal",
+										"app": "poll",
 									},
 								},
 								"spec": map[string]interface{}{
 									"serviceAccountName": os.Getenv("DEPLOYMENT_SERVICE_ACCOUNT_NAME"),
 									"containers": []map[string]interface{}{
 										{
-											"name":  "meal-container",
+											"name":  "poll-container",
 											"image": os.Getenv("DEPLOYMENT_IMAGE_NAME"),
 											"envFrom": []map[string]interface{}{
 												{"configMapRef": map[string]interface{}{"name": os.Getenv("CONFIG_MAP_NAME")}},
