@@ -1,6 +1,13 @@
-# Replace this with your XR!
-apiVersion: example.crossplane.io/v1
-kind: XR
+apiVersion: kndp.io/v1alpha1
+kind: Meal
 metadata:
-  name: example-xr
-spec: {}
+  name: meal
+  annotations:
+    "poll.fn.kndp.io/last-sent-time": ""
+spec:
+  deliveryTime: ""
+  dueOrderTime: ""
+  dueTakeTime: ""
+  employeeRefs: []
+  status: ""
+

@@ -12,14 +12,9 @@ spec:
     functionRef:
       name: function-template-go
     input:
-      slackApiToken: "apikey"
+      slackAPIToken: ""
       slackNotifyMessage: "Order something?"
-      slackChanelID: "chanelid"
-      pollServiceName: ""
-      pollServicePort: 80
-      pollServiceTargetPort: 80
-      ingressName: ""
-      ingressHostName: ""
+      slackChanelID: ""
       providerConfigRef: ""
       deploymentName: ""
       deploymentServiceAccount: ""
