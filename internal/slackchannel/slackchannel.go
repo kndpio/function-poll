@@ -2,13 +2,13 @@
 package slackchannel
 
 import (
-	"fmt"
 	"log"
 
 	"github.com/slack-go/slack"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
+	"github.com/crossplane/function-sdk-go/logging"
 	"github.com/crossplane/function-sdk-go/resource"
 )
 
@@ -63,26 +63,26 @@ func ProcessSlackMembers(api *slack.Client, channelID string) ([]string, error) 
 }
 
 // SendSlackMessage is for sending messages to users in slack
-func SendSlackMessage(xr *resource.Composite, api *slack.Client, channelID string, slackNotifyMessage string) {
+func SendSlackMessage(xr *resource.Composite, api *slack.Client, channelID string, slackNotifyMessage string, logger logging.Logger) {
 	members, _, err := api.GetUsersInConversation(&slack.GetUsersInConversationParameters{
 		ChannelID: channelID,
 	})
 	if err != nil {
-		fmt.Printf("Error getting conversation members: %v", err)
+		logger.Info("Error getting conversation members", "warning", err)
 	}
 
-	fmt.Println("Conversation Members:", members)
+	logger.Debug("Conversation Members:", members)
 	pollName, _ := xr.Resource.GetString("metadata.name")
 	pollTitle, _ := xr.Resource.GetString("spec.Title")
 	poll := Poll{}
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(xr.Resource.Object, &poll); err != nil {
-		fmt.Println("error converting Unstructured to Poll:", err)
+		logger.Info("error converting Unstructured to Poll:", "warning", err)
 	}
 
 	for _, memberID := range members {
 		userInfo, err := api.GetUserInfo(memberID)
 		if err != nil {
-			log.Printf("Error getting user info for %s: %v", memberID, err)
+			logger.Info("Error getting user info for %s: %v", memberID, err)
 			continue
 		}
 
@@ -110,7 +110,7 @@ func SendSlackMessage(xr *resource.Composite, api *slack.Client, channelID strin
 				continue
 			}
 
-			fmt.Printf("Message sent to user %s (%s) in channel %s\n", userInfo.Name, userInfo.ID, channelID)
+			logger.Debug("Message sent to user %s (%s) in channel %s\n", userInfo.Name, userInfo.ID, channelID)
 		}
 	}
 }

@@ -13,7 +13,7 @@ spec:
       name: function-template-go
     input:
       slackAPIToken: ""
-      slackNotifyMessage: "Order something?"
+      slackNotifyMessage: ""
       slackChanelID: ""
       providerConfigRef: ""
       deploymentName: ""

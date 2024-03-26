@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -28,7 +27,7 @@ type Function struct {
 }
 
 // Checking if time passed before sending new message
-func timeElapsed(xr *resource.Composite, rsp *fnv1beta1.RunFunctionResponse) bool {
+func timeElapsed(xr *resource.Composite, rsp *fnv1beta1.RunFunctionResponse, logger logging.Logger) bool {
 	currentTime := int(time.Now().Unix())
 	annotations := xr.Resource.GetAnnotations()
 	lastSentMessage, _ := strconv.Atoi(annotations["poll.fn.kndp.io/last-sent-time"])
@@ -37,7 +36,7 @@ func timeElapsed(xr *resource.Composite, rsp *fnv1beta1.RunFunctionResponse) boo
 		annotations["poll.fn.kndp.io/last-sent-time"] = strconv.Itoa(currentTime)
 		xr.Resource.SetAnnotations(annotations)
 		if err := response.SetDesiredCompositeResource(rsp, xr); err != nil {
-			fmt.Println(err)
+			logger.Info("Error setting desired composite resource", err)
 		}
 		return true
 	}
@@ -46,7 +45,7 @@ func timeElapsed(xr *resource.Composite, rsp *fnv1beta1.RunFunctionResponse) boo
 }
 
 // Transform K8s resources into unstructured
-func (f *Function) transformK8sResource(input *v1beta1.Input) composed.Unstructured {
+func (f *Function) transformK8sResource(input *v1beta1.Input, logger logging.Logger) composed.Unstructured {
 
 	deploymentTemplate := map[string]interface{}{
 		"apiVersion": "kubernetes.crossplane.io/v1alpha1",
@@ -105,32 +104,36 @@ func (f *Function) transformK8sResource(input *v1beta1.Input) composed.Unstructu
 	unstructuredData := composed.Unstructured{}
 	unstructuredDataByte, err := json.Marshal(deploymentTemplate)
 	if err != nil {
-		fmt.Println(err)
+		logger.Info("Error marshalling deployment template", "warning", err)
 	}
 	err = json.Unmarshal(unstructuredDataByte, &unstructuredData)
 	if err != nil {
-		fmt.Println(err)
+		logger.Info("Error unmarshalling deployment template", "warning", err)
 	}
 
 	return unstructuredData
 }
 
 // Check if the dueOrderTime is passed or all users have voted
-func checkDueOrderTimeAndVoteCount(xr *resource.Composite, currentTimestamp int, users []string) bool {
+func checkDueOrderTimeAndVoteCount(xr *resource.Composite, currentTimestamp int, users []string, logger logging.Logger) bool {
 	dueOrderTimeString, _ := xr.Resource.GetString("spec.dueOrderTime")
 	dueOrderTime, _ := strconv.Atoi(dueOrderTimeString)
 	voters, _ := xr.Resource.GetStringArray("spec.voters")
-	fmt.Println("DueOrderTime: ", dueOrderTime, "CurrentTimestamp: ", currentTimestamp)
+	logger.Debug("DueOrderTime: ", dueOrderTime, "CurrentTimestamp: ", currentTimestamp)
+	if users == nil {
+		users = []string{""}
+	}
+
 	return currentTimestamp >= dueOrderTime || len(voters) == len(users)
 }
 
 // RunFunction adds a Deployment and the new object template to the desired state.
 func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequest) (*fnv1beta1.RunFunctionResponse, error) {
-
+	f.log.Info("Running Function")
 	var conditionStatus corev1.ConditionStatus
 	input := &v1beta1.Input{}
 	if err := request.GetInput(req, input); err != nil {
-		fmt.Println(err)
+		f.log.Info("cannot get function input", "warning", err)
 	}
 	api := slack.New(input.SlackAPIToken)
 
@@ -144,16 +147,15 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 
 	xr, err := request.GetObservedCompositeResource(req)
 	if err != nil {
-		return nil, err
+		f.log.Info("cannot get desired composite resources", "warning", err)
 	}
 	users, err := slackchannel.ProcessSlackMembers(api, input.SlackChanelID)
 	if err != nil {
-		fmt.Printf("Error getting conversation members: %v", err)
+		f.log.Info("cannot get conversation members", "warning", err)
 	}
-
-	if checkDueOrderTimeAndVoteCount(xr, currentTimestamp, users) {
+	if checkDueOrderTimeAndVoteCount(xr, currentTimestamp, users, f.log) {
 		conditionStatus = corev1.ConditionTrue
-		fmt.Println("DueOrderTime is passed due, send results in slack chanel")
+		f.log.Info("DueOrderTime is passed due, send results in slack chanel")
 		xr.Resource.SetConditions(v1.Condition{Type: v1.TypeSynced, Status: corev1.ConditionTrue})
 		err = response.SetDesiredCompositeResource(rsp, xr)
 		if err != nil {
@@ -162,11 +164,11 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 
 	} else {
 		conditionStatus = corev1.ConditionFalse
-		if timeElapsed(xr, rsp) {
-			slackchannel.SendSlackMessage(xr, api, input.SlackChanelID, input.SlackNotifyMessage)
+		if timeElapsed(xr, rsp, f.log) {
+			slackchannel.SendSlackMessage(xr, api, input.SlackChanelID, input.SlackNotifyMessage, f.log)
 		}
 
-		deployment := f.transformK8sResource(input)
+		deployment := f.transformK8sResource(input, f.log)
 		desired[resource.Name(deployment.GetName())] = &resource.DesiredComposed{Resource: &deployment}
 
 		if err := response.SetDesiredComposedResources(rsp, desired); err != nil {
