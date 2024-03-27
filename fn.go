@@ -36,7 +36,7 @@ func timeElapsed(xr *resource.Composite, rsp *fnv1beta1.RunFunctionResponse, log
 		annotations["poll.fn.kndp.io/last-sent-time"] = strconv.Itoa(currentTime)
 		xr.Resource.SetAnnotations(annotations)
 		if err := response.SetDesiredCompositeResource(rsp, xr); err != nil {
-			logger.Info("Error setting desired composite resource", err)
+			logger.Info("error setting desired composite resource", err)
 		}
 		return true
 	}
@@ -104,11 +104,11 @@ func (f *Function) transformK8sResource(input *v1beta1.Input, logger logging.Log
 	unstructuredData := composed.Unstructured{}
 	unstructuredDataByte, err := json.Marshal(deploymentTemplate)
 	if err != nil {
-		logger.Info("Error marshalling deployment template", "warning", err)
+		logger.Info("error marshalling deployment template", "warning", err)
 	}
 	err = json.Unmarshal(unstructuredDataByte, &unstructuredData)
 	if err != nil {
-		logger.Info("Error unmarshalling deployment template", "warning", err)
+		logger.Info("error unmarshalling deployment template", "warning", err)
 	}
 
 	return unstructuredData
@@ -127,43 +127,45 @@ func checkDueOrderTimeAndVoteCount(xr *resource.Composite, currentTimestamp int,
 	return currentTimestamp >= dueOrderTime || len(voters) == len(users)
 }
 
+func setSyncedCondition(xr *resource.Composite, conditionStatus corev1.ConditionStatus) {
+	xr.Resource.SetConditions(v1.Condition{Type: v1.TypeSynced, Status: conditionStatus})
+}
+
 // RunFunction adds a Deployment and the new object template to the desired state.
 func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequest) (*fnv1beta1.RunFunctionResponse, error) {
 	f.log.Info("Running Function")
-	var conditionStatus corev1.ConditionStatus
 	input := &v1beta1.Input{}
 	if err := request.GetInput(req, input); err != nil {
 		f.log.Info("cannot get function input", "warning", err)
 	}
 	api := slack.New(input.SlackAPIToken)
-
 	currentTimestamp := int(time.Now().Unix())
+	desired, _ := request.GetDesiredComposedResources(req)
 
-	desired, err := request.GetDesiredComposedResources(req)
-	if err != nil {
-		return nil, err
-	}
 	rsp := response.To(req, response.DefaultTTL)
 
-	xr, err := request.GetObservedCompositeResource(req)
-	if err != nil {
-		f.log.Info("cannot get desired composite resources", "warning", err)
-	}
-	users, err := slackchannel.ProcessSlackMembers(api, input.SlackChanelID)
+	xr, _ := request.GetObservedCompositeResource(req)
+
+	users, err := slackchannel.ProcessSlackMembers(api, input.SlackChanelID, f.log)
 	if err != nil {
 		f.log.Info("cannot get conversation members", "warning", err)
 	}
 	if checkDueOrderTimeAndVoteCount(xr, currentTimestamp, users, f.log) {
-		conditionStatus = corev1.ConditionTrue
-		f.log.Info("DueOrderTime is passed due, send results in slack chanel")
-		xr.Resource.SetConditions(v1.Condition{Type: v1.TypeSynced, Status: corev1.ConditionTrue})
+		setSyncedCondition(xr, corev1.ConditionTrue)
 		err = response.SetDesiredCompositeResource(rsp, xr)
 		if err != nil {
 			return rsp, err
 		}
-
+		status, _ := xr.Resource.GetString("spec.status")
+		if status != "done" {
+			slackchannel.SlackOrder(input, api, xr, f.log)
+		}
+		err := xr.Resource.SetString("spec.status", "done")
+		if err != nil {
+			return rsp, err
+		}
 	} else {
-		conditionStatus = corev1.ConditionFalse
+		setSyncedCondition(xr, corev1.ConditionFalse)
 		if timeElapsed(xr, rsp, f.log) {
 			slackchannel.SendSlackMessage(xr, api, input.SlackChanelID, input.SlackNotifyMessage, f.log)
 		}
@@ -175,7 +177,6 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 			return rsp, err
 		}
 	}
-	xr.Resource.SetConditions(v1.Condition{Type: v1.TypeSynced, Status: conditionStatus})
 	err = response.SetDesiredCompositeResource(rsp, xr)
 	if err != nil {
 		return rsp, err
