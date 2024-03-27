@@ -2,8 +2,6 @@
 package main
 
 import (
-	"fmt"
-
 	"github.com/alecthomas/kong"
 
 	"github.com/crossplane/function-sdk-go"
@@ -21,7 +19,6 @@ type CLI struct {
 
 // Run this Function.
 func (c *CLI) Run() error {
-	fmt.Println("Crossplane Function Initialized")
 	log, err := function.NewLogger(c.Debug)
 	if err != nil {
 		return err

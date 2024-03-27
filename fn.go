@@ -3,15 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"log"
 	"strconv"
 	"time"
 
 	"github.com/slack-go/slack"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
+	corev1 "k8s.io/api/core/v1"
 
+	v1 "github.com/crossplane/crossplane-runtime/apis/common/v1"
 	"github.com/crossplane/function-sdk-go/logging"
 	fnv1beta1 "github.com/crossplane/function-sdk-go/proto/v1beta1"
 	"github.com/crossplane/function-sdk-go/request"
@@ -19,26 +17,8 @@ import (
 	"github.com/crossplane/function-sdk-go/resource/composed"
 	"github.com/crossplane/function-sdk-go/response"
 	"github.com/crossplane/function-template-go/input/v1beta1"
+	"github.com/crossplane/function-template-go/internal/slackchannel"
 )
-
-// Poll type
-type Poll struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
-	Spec              struct {
-		DeliveryTime string  `json:"deliveryTime"`
-		DueOrderTime string  `json:"dueOrderTime"`
-		DueTakeTime  string  `json:"dueTakeTime"`
-		Voters       []Voter `json:"voters"`
-		Status       string  `json:"status"`
-	} `json:"spec"`
-}
-
-// Voter type
-type Voter struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
-}
 
 // Function returns whatever response you ask it to.
 type Function struct {
@@ -47,7 +27,7 @@ type Function struct {
 }
 
 // Checking if time passed before sending new message
-func timeElapsed(xr *resource.Composite, rsp *fnv1beta1.RunFunctionResponse) bool {
+func timeElapsed(xr *resource.Composite, rsp *fnv1beta1.RunFunctionResponse, logger logging.Logger) bool {
 	currentTime := int(time.Now().Unix())
 	annotations := xr.Resource.GetAnnotations()
 	lastSentMessage, _ := strconv.Atoi(annotations["poll.fn.kndp.io/last-sent-time"])
@@ -56,7 +36,7 @@ func timeElapsed(xr *resource.Composite, rsp *fnv1beta1.RunFunctionResponse) boo
 		annotations["poll.fn.kndp.io/last-sent-time"] = strconv.Itoa(currentTime)
 		xr.Resource.SetAnnotations(annotations)
 		if err := response.SetDesiredCompositeResource(rsp, xr); err != nil {
-			fmt.Println(err)
+			logger.Info("Error setting desired composite resource", err)
 		}
 		return true
 	}
@@ -64,71 +44,8 @@ func timeElapsed(xr *resource.Composite, rsp *fnv1beta1.RunFunctionResponse) boo
 	return false
 }
 
-// Check if the user should receive a message based on status
-func userVoted(voters []Voter, userName string) bool {
-	for _, Voter := range voters {
-		if Voter.Name == userName {
-			return Voter.Status == ""
-		}
-	}
-	return true
-}
-
-// Function for sending messages to users in slack
-func sendSlackMessage(xr *resource.Composite, api *slack.Client, channelID string, slackNotifyMessage string) {
-	members, _, err := api.GetUsersInConversation(&slack.GetUsersInConversationParameters{
-		ChannelID: channelID,
-	})
-	if err != nil {
-		fmt.Printf("Error getting conversation members: %v", err)
-	}
-
-	fmt.Println("Conversation Members:", members)
-	pollName, _ := xr.Resource.GetString("metadata.name")
-	pollTitle, _ := xr.Resource.GetString("spec.Title")
-	poll := Poll{}
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(xr.Resource.Object, &poll); err != nil {
-		fmt.Println("error converting Unstructured to Poll:", err)
-	}
-
-	for _, memberID := range members {
-		userInfo, err := api.GetUserInfo(memberID)
-		if err != nil {
-			log.Printf("Error getting user info for %s: %v", memberID, err)
-			continue
-		}
-
-		attachment := slack.Attachment{
-			Color:      "#f9a41b",
-			CallbackID: pollName,
-			Title:      pollTitle,
-			TitleLink:  pollTitle,
-			Text:       slackNotifyMessage,
-			Fields:     []slack.AttachmentField{},
-			Actions:    []slack.AttachmentAction{{Name: "actionSelect", Type: "select", Options: []slack.AttachmentActionOption{{Text: "Yes", Value: "Yes"}, {Text: "No", Value: "No"}}}, {Name: "actionCancel", Text: "Cancel", Type: "button", Style: "danger"}},
-			MarkdownIn: []string{},
-			Blocks:     slack.Blocks{},
-		}
-
-		if userVoted(poll.Spec.Voters, userInfo.Name) {
-			channelID, _, err := api.PostMessage(
-				userInfo.ID,
-				slack.MsgOptionText("", true),
-				slack.MsgOptionAttachments(attachment),
-				slack.MsgOptionAsUser(true),
-			)
-			if err != nil {
-				log.Printf("Error sending message to user %s (%s): %v", userInfo.Name, userInfo.ID, err)
-				continue
-			}
-
-			fmt.Printf("Message sent to user %s (%s) in channel %s\n", userInfo.Name, userInfo.ID, channelID)
-		}
-	}
-}
-
 // Transform K8s resources into unstructured
-func (f *Function) transformK8sResource(input *v1beta1.Input) composed.Unstructured {
+func (f *Function) transformK8sResource(input *v1beta1.Input, logger logging.Logger) composed.Unstructured {
 
 	deploymentTemplate := map[string]interface{}{
 		"apiVersion": "kubernetes.crossplane.io/v1alpha1",
@@ -187,79 +104,81 @@ func (f *Function) transformK8sResource(input *v1beta1.Input) composed.Unstructu
 	unstructuredData := composed.Unstructured{}
 	unstructuredDataByte, err := json.Marshal(deploymentTemplate)
 	if err != nil {
-		fmt.Println(err)
+		logger.Info("Error marshalling deployment template", "warning", err)
 	}
 	err = json.Unmarshal(unstructuredDataByte, &unstructuredData)
 	if err != nil {
-		fmt.Println(err)
+		logger.Info("Error unmarshalling deployment template", "warning", err)
 	}
 
 	return unstructuredData
 }
 
-// Check if user is not a bot
-func realUsers(members []string, api *slack.Client) []string {
-	realUsers := make([]string, 0)
-	for _, memberID := range members {
-		userInfo, err := api.GetUserInfo(memberID)
-		if err != nil {
-			log.Printf("Error getting user info for %s: %v", memberID, err)
-			continue
-		}
-
-		if !userInfo.IsBot {
-			realUsers = append(realUsers, userInfo.Name)
-		}
+// Check if the dueOrderTime is passed or all users have voted
+func checkDueOrderTimeAndVoteCount(xr *resource.Composite, currentTimestamp int, users []string, logger logging.Logger) bool {
+	dueOrderTimeString, _ := xr.Resource.GetString("spec.dueOrderTime")
+	dueOrderTime, _ := strconv.Atoi(dueOrderTimeString)
+	voters, _ := xr.Resource.GetStringArray("spec.voters")
+	logger.Debug("DueOrderTime: ", dueOrderTime, "CurrentTimestamp: ", currentTimestamp)
+	if users == nil {
+		users = []string{""}
 	}
-	return realUsers
+
+	return currentTimestamp >= dueOrderTime || len(voters) == len(users)
 }
 
 // RunFunction adds a Deployment and the new object template to the desired state.
 func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequest) (*fnv1beta1.RunFunctionResponse, error) {
-
+	f.log.Info("Running Function")
+	var conditionStatus corev1.ConditionStatus
 	input := &v1beta1.Input{}
 	if err := request.GetInput(req, input); err != nil {
-		fmt.Println(err)
+		f.log.Info("cannot get function input", "warning", err)
 	}
-
 	api := slack.New(input.SlackAPIToken)
+
+	currentTimestamp := int(time.Now().Unix())
+
+	desired, err := request.GetDesiredComposedResources(req)
+	if err != nil {
+		return nil, err
+	}
 	rsp := response.To(req, response.DefaultTTL)
+
 	xr, err := request.GetObservedCompositeResource(req)
 	if err != nil {
-		return rsp, err
+		f.log.Info("cannot get desired composite resources", "warning", err)
 	}
-
-	members, _, err := api.GetUsersInConversation(&slack.GetUsersInConversationParameters{
-		ChannelID: input.SlackChanelID,
-	})
+	users, err := slackchannel.ProcessSlackMembers(api, input.SlackChanelID)
 	if err != nil {
-		fmt.Printf("Error getting conversation members: %v", err)
+		f.log.Info("cannot get conversation members", "warning", err)
 	}
-	users := realUsers(members, api)
-	Voters, _ := xr.Resource.GetStringArray("spec.voters")
-	dueOrderTimeString, _ := xr.Resource.GetString("spec.dueOrderTime")
-	dueOrderTime, _ := strconv.Atoi(dueOrderTimeString)
-	currentTimestamp := int(time.Now().Unix())
-	fmt.Println("DueOrderTime: ", dueOrderTime, "CurrentTimestamp: ", currentTimestamp)
-
-	if currentTimestamp >= dueOrderTime || len(Voters) == len(users) {
-		fmt.Println("DueOrderTime is passed due, send results in slack chanel")
-	} else {
-		if timeElapsed(xr, rsp) {
-			sendSlackMessage(xr, api, input.SlackChanelID, input.SlackNotifyMessage)
-		}
-
-		desired, err := request.GetDesiredComposedResources(req)
+	if checkDueOrderTimeAndVoteCount(xr, currentTimestamp, users, f.log) {
+		conditionStatus = corev1.ConditionTrue
+		f.log.Info("DueOrderTime is passed due, send results in slack chanel")
+		xr.Resource.SetConditions(v1.Condition{Type: v1.TypeSynced, Status: corev1.ConditionTrue})
+		err = response.SetDesiredCompositeResource(rsp, xr)
 		if err != nil {
 			return rsp, err
 		}
 
-		deployment := f.transformK8sResource(input)
+	} else {
+		conditionStatus = corev1.ConditionFalse
+		if timeElapsed(xr, rsp, f.log) {
+			slackchannel.SendSlackMessage(xr, api, input.SlackChanelID, input.SlackNotifyMessage, f.log)
+		}
+
+		deployment := f.transformK8sResource(input, f.log)
 		desired[resource.Name(deployment.GetName())] = &resource.DesiredComposed{Resource: &deployment}
 
 		if err := response.SetDesiredComposedResources(rsp, desired); err != nil {
 			return rsp, err
 		}
+	}
+	xr.Resource.SetConditions(v1.Condition{Type: v1.TypeSynced, Status: conditionStatus})
+	err = response.SetDesiredCompositeResource(rsp, xr)
+	if err != nil {
+		return rsp, err
 	}
 	return rsp, nil
 }
