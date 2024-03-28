@@ -94,7 +94,7 @@ func TestRunFunction(t *testing.T) {
 								  "dueOrderTime": "",
 								  "dueTakeTime": "",
 								  "employeeRefs": [],
-								  "status": ""
+								  "status": "done"
 								},
 								"status": {
 								  "conditions": [
