@@ -9,3 +9,5 @@ metadata:
 spec:
   # This is ignored when using the Development runtime.
   package: function-template-go
+  runtimeConfigRef:
+    name: poll-function-runtime

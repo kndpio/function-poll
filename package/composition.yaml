@@ -1,22 +1,18 @@
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
-  name: function-template-go
+  name: poll-composition
 spec:
   compositeTypeRef:
-    apiVersion: example.crossplane.io/v1
-    kind: XR
+    apiVersion: kndp.io/v1alpha1
+    kind: Poll
   mode: Pipeline
   pipeline:
   - step: run-the-template
     functionRef:
       name: function-template-go
     input:
-      slackAPIToken: ""
-      slackNotifyMessage: "helo"
-      slackChanelID: ""
       providerConfigRef: "default"
       deploymentName: "collect"
       deploymentServiceAccount: "default"
       deploymentImage: "ghcr.io/kndpio/kndp/slack-collector:0.1.0"
-      configMap: "cm"

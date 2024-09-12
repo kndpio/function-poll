@@ -1,14 +1,16 @@
 apiVersion: kndp.io/v1alpha1
-kind: Meal
+kind: Poll
 metadata:
-  name: meal
-  annotations:
-    "poll.fn.kndp.io/last-sent-time": ""
+  name: poll
+  creationTimestamp: "2024-09-12T11:55:55Z"
 spec:
   deliveryTime: ""
-  dueOrderTime: ""
+  dueOrderTime: "3000"
   dueTakeTime: ""
   employeeRefs: []
   status: ""
   title: ""
-
+  messages: 
+    question: "how are you?"
+    response: "thank you for response."
+    result:  "here are the voting results:"

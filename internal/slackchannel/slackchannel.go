@@ -2,6 +2,7 @@
 package slackchannel
 
 import (
+	"os"
 	"strconv"
 	"strings"
 
@@ -12,6 +13,10 @@ import (
 	"github.com/crossplane/function-sdk-go/logging"
 	"github.com/crossplane/function-sdk-go/resource"
 	"github.com/crossplane/function-template-go/input/v1beta1"
+)
+
+var (
+	channelId = os.Getenv("SLACK_CHANEL_ID")
 )
 
 // Poll type
@@ -73,7 +78,7 @@ func SendSlackMessage(xr *resource.Composite, api *slack.Client, channelID strin
 		logger.Info("error getting conversation members", "warning", err)
 	}
 
-	logger.Debug("conversation members:", members)
+	logger.Debug("conversation members:", "userId", members)
 	pollName, _ := xr.Resource.GetString("metadata.name")
 	pollTitle, _ := xr.Resource.GetString("spec.title")
 	poll := Poll{}
@@ -110,7 +115,7 @@ func SendSlackMessage(xr *resource.Composite, api *slack.Client, channelID strin
 			if err != nil {
 				logger.Info("error sending message to user: ", userInfo.Name, userInfo.ID, err)
 			} else {
-				logger.Debug("message sent to user in channel: \n", userInfo.Name, userInfo.ID, channelID)
+				logger.Debug("message sent to user in channel: ", userInfo.Name, channelID)
 			}
 
 		}
@@ -147,7 +152,7 @@ func SlackOrder(input *v1beta1.Input, api *slack.Client, xr *resource.Composite,
 	}
 
 	channelID, timestamp, err := api.PostMessage(
-		input.SlackChanelID,
+		channelId,
 		slack.MsgOptionText("", false),
 		slack.MsgOptionAttachments(attachment),
 		slack.MsgOptionAsUser(true),
