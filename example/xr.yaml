@@ -2,12 +2,11 @@ apiVersion: kndp.io/v1alpha1
 kind: Poll
 metadata:
   name: poll
-  creationTimestamp: "2024-09-12T11:55:55Z"
 spec:
   deliveryTime: ""
   dueOrderTime: "3000"
   dueTakeTime: ""
-  employeeRefs: []
+  voters: []
   status: ""
   title: ""
   messages: 

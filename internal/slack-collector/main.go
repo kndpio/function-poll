@@ -10,13 +10,14 @@ import (
 
 	"github.com/slack-go/slack"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
+// SelectedOptionValue represents the structure of the selected option value from Slack.
 type SelectedOptionValue struct {
 	User struct {
 		ID   string `json:"id"`
@@ -37,26 +38,42 @@ type SelectedOptionValue struct {
 	} `json:"original_message"`
 }
 
-type EmployeeRef struct {
+// Voter represents the structure of an Voter reference.
+type Voter struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
 }
 
-type Meal struct {
+// Message represents the structure of a message.
+type Message struct {
+	Question string `json:"question"`
+	Response string `json:"response"`
+	Result   string `json:"result"`
+}
+
+// Poll represents the structure of a poll.
+type Poll struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 	Spec              struct {
-		DeliveryTime string        `json:"deliveryTime"`
-		DueOrderTime string        `json:"dueOrderTime"`
-		DueTakeTime  string        `json:"dueTakeTime"`
-		EmployeeRefs []EmployeeRef `json:"employeeRefs"`
-		Title        string        `json:"title"`
-		Status       string        `json:"status"`
+		DeliveryTime string  `json:"deliveryTime"`
+		DueOrderTime string  `json:"dueOrderTime"`
+		DueTakeTime  string  `json:"dueTakeTime"`
+		Voters       []Voter `json:"voters"`
+		Title        string  `json:"title"`
+		Messages     Message `json:"messages"`
+		Status       string  `json:"status"`
 	} `json:"spec"`
 }
 
-var api = slack.New(os.Getenv("SLACK_API_TOKEN"))
+var (
+	api          = slack.New(os.Getenv("SLACK_API_TOKEN"))
+	path         = os.Getenv("SLACK_COLLECTOR_PATH")
+	port         = os.Getenv("SLACK_COLLECTOR_PORT")
+	pollResource *Poll
+)
 
+// handleEventsEndpoint handles the events endpoint.
 func handleEventsEndpoint(w http.ResponseWriter, r *http.Request, dynamicClient dynamic.Interface, ctx context.Context) {
 	payload, err := url.QueryUnescape(r.FormValue("payload"))
 	if err != nil {
@@ -71,118 +88,80 @@ func handleEventsEndpoint(w http.ResponseWriter, r *http.Request, dynamicClient 
 		return
 	}
 	selectedOption := data.Actions[0].SelectedOptions[0].Value
-	mealSlackName := data.CallbackID
+	pollSlackName := data.CallbackID
 
-	fmt.Println("mealName:", mealSlackName)
 	user := data.User.Name
 	userID := data.User.ID
-	respondMsg(userID, user, selectedOption)
 
-	// err = patchEmployeeRefStatus(user, mealSlackName, selectedOption, dynamicClient, ctx)
-	// if err != nil {
-	// 	fmt.Println("Error patching EmployeeRef status:", err)
-	// }
+	err = patchVoterStatus(user, pollSlackName, selectedOption, dynamicClient, ctx)
+	if err != nil {
+		fmt.Println("Error patching Voter status:", err)
+	}
+	respondMsg(userID, user, selectedOption, pollSlackName)
 }
 
-func patchEmployeeRefStatus(user, mealSlackName, selectedOption string, dynamicClient dynamic.Interface, ctx context.Context) error {
-	meal, err := getMealResource(dynamicClient, ctx, mealSlackName)
-	if err != nil {
-		return fmt.Errorf("error getting Meal resource: %v", err)
+// patchVoterStatus patches the employee reference status.
+func patchVoterStatus(user, pollSlackName, selectedOption string, dynamicClient dynamic.Interface, ctx context.Context) error {
+	resourceId := schema.GroupVersionResource{
+		Group:    "kndp.io",
+		Version:  "v1alpha1",
+		Resource: "polls",
 	}
+	pollResource, _ = getK8sResource(dynamicClient, ctx, pollSlackName, resourceId)
 
 	foundUser := false
-	for i := range meal.Spec.EmployeeRefs {
-		if meal.Spec.EmployeeRefs[i].Name == user {
-			meal.Spec.EmployeeRefs[i].Status = selectedOption
+	for i := range pollResource.Spec.Voters {
+		if pollResource.Spec.Voters[i].Name == user {
+			pollResource.Spec.Voters[i].Status = selectedOption
 			foundUser = true
 			break
 		}
 	}
 
 	if !foundUser {
-		newEmployeeRef := EmployeeRef{
+		newVoter := Voter{
 			Name:   user,
 			Status: selectedOption,
 		}
-		meal.Spec.EmployeeRefs = append(meal.Spec.EmployeeRefs, newEmployeeRef)
+		pollResource.Spec.Voters = append(pollResource.Spec.Voters, newVoter)
 	}
 
-	obj := createMealUnstructuredObject(meal)
-	applyOptions := metav1.ApplyOptions{
-		Force:        true,
-		FieldManager: "meal-system",
-	}
-	mealName := meal.GetObjectMeta().GetName()
-	_, err = ApplyResource(ctx, dynamicClient, "kndp.io", "v1alpha1", "meals", "", mealName, obj, applyOptions)
+	pollResource.GetObjectMeta().SetManagedFields(nil)
+	pollBytes, _ := json.Marshal(pollResource)
+	_, err := dynamicClient.Resource(resourceId).Namespace("").Patch(ctx, pollResource.GetObjectMeta().GetName(), types.MergePatchType, pollBytes, metav1.PatchOptions{FieldManager: "slack-collector"})
+
 	return err
 }
 
-func createMealUnstructuredObject(meal *Meal) *unstructured.Unstructured {
-	return &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": "kndp.io/v1alpha1",
-			"kind":       "Meal",
-			"metadata": map[string]interface{}{
-				"name": meal.GetObjectMeta().GetName(),
-			},
-			"spec": map[string]interface{}{
-				"dueOrderTime": meal.Spec.DueOrderTime,
-				"employeeRefs": meal.Spec.EmployeeRefs,
-			},
-		},
-	}
-}
+// getK8sResource gets the Kubernetes resource.
+func getK8sResource(dynamicClient dynamic.Interface, ctx context.Context, pollSlackName string, resId schema.GroupVersionResource) (*Poll, error) {
 
-func getMealResource(dynamicClient dynamic.Interface, ctx context.Context, mealSlackName string) (*Meal, error) {
-	items, err := GetResources(dynamicClient, ctx, "kndp.io", "v1alpha1", "meals", "")
-	if err != nil {
-		return nil, err
-	}
-	for _, item := range items {
-		meal := &Meal{}
-		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(item.Object, meal); err != nil {
-			return nil, fmt.Errorf("error converting Unstructured to Meal: %v", err)
-		}
-		if meal.GetObjectMeta().GetName() == mealSlackName {
-			return meal, nil
-		}
-	}
-
-	return nil, fmt.Errorf("Meal resource with name %s not found", mealSlackName)
-}
-
-func GetResources(dynamic dynamic.Interface, ctx context.Context, group string, version string, resource string, namespace string) ([]unstructured.Unstructured, error) {
-	resourceId := schema.GroupVersionResource{
-		Group:    group,
-		Version:  version,
-		Resource: resource,
-	}
-	list, err := dynamic.Resource(resourceId).Namespace(namespace).
+	res, err := dynamicClient.Resource(resId).Namespace("").
 		List(ctx, metav1.ListOptions{})
 
 	if err != nil {
 		return nil, err
 	}
 
-	return list.Items, nil
-}
-
-func ApplyResource(ctx context.Context, client dynamic.Interface, group, version, resource, namespace, name string, obj *unstructured.Unstructured, options metav1.ApplyOptions, subresources ...string) (*unstructured.Unstructured, error) {
-	resourceId := schema.GroupVersionResource{
-		Group:    group,
-		Version:  version,
-		Resource: resource,
+	for _, item := range res.Items {
+		res := &Poll{}
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(item.Object, res); err != nil {
+			return nil, fmt.Errorf("error converting Unstructured to Poll struct: %v", err)
+		}
+		if res.GetObjectMeta().GetName() == pollSlackName {
+			return res, nil
+		}
 	}
-	resourceClient := client.Resource(resourceId).Namespace(namespace)
 
-	return resourceClient.Apply(ctx, name, obj, options, subresources...)
+	return nil, fmt.Errorf("poll resource with name %s not found", pollSlackName)
 }
 
-func respondMsg(userID string, userName string, selectedOption string) {
+// respondMsg sends a response message to Slack.
+func respondMsg(userID string, userName string, selectedOption string, pollName string) {
 	attachment := slack.Attachment{
 		Color:      "#f9a41b",
-		CallbackID: "meal",
-		Text:       os.Getenv("SLACK_COLLECTOR_MESSAGE") + "\n Selected: " + selectedOption,
+		CallbackID: pollName,
+		Text:       pollResource.Spec.Messages.Response + "\n Selected: " + selectedOption,
 		Fields:     []slack.AttachmentField{},
 		Actions:    []slack.AttachmentAction{},
 		MarkdownIn: []string{},
@@ -200,15 +179,13 @@ func respondMsg(userID string, userName string, selectedOption string) {
 		return
 	}
 
-	fmt.Printf("Message sent to user %s (%s) in channel %s\n", userName, userID, channelID)
+	fmt.Printf("message sent to user %s (%s) in channel %s\n", userName, userID, channelID)
 }
 
 func main() {
 	ctx := context.Background()
 	config := ctrl.GetConfigOrDie()
 	dynamicClient := dynamic.NewForConfigOrDie(config)
-	path := os.Getenv("SLACK_COLLECTOR_URL")
-	port := os.Getenv("SLACK_COLLECTOR_PORT")
 	if port == "" {
 		port = "3000"
 	}

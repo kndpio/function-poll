@@ -17,9 +17,24 @@ import (
 
 var (
 	channelId = os.Getenv("SLACK_CHANEL_ID")
+	pollName  string
+	pollTitle string
 )
 
-// Poll type
+// Voter represents the structure of an Voter reference.
+type Voter struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+// Message represents the structure of a message.
+type Message struct {
+	Question string `json:"question"`
+	Response string `json:"response"`
+	Result   string `json:"result"`
+}
+
+// Poll represents the structure of a poll.
 type Poll struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -28,14 +43,10 @@ type Poll struct {
 		DueOrderTime string  `json:"dueOrderTime"`
 		DueTakeTime  string  `json:"dueTakeTime"`
 		Voters       []Voter `json:"voters"`
+		Title        string  `json:"title"`
+		Messages     Message `json:"messages"`
 		Status       string  `json:"status"`
 	} `json:"spec"`
-}
-
-// Voter type
-type Voter struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
 }
 
 // UserVoted checks if the user should receive a message based on status
@@ -79,8 +90,8 @@ func SendSlackMessage(xr *resource.Composite, api *slack.Client, channelID strin
 	}
 
 	logger.Debug("conversation members:", "userId", members)
-	pollName, _ := xr.Resource.GetString("metadata.name")
-	pollTitle, _ := xr.Resource.GetString("spec.title")
+	pollName, _ = xr.Resource.GetString("metadata.name")
+	pollTitle, _ = xr.Resource.GetString("spec.title")
 	poll := Poll{}
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(xr.Resource.Object, &poll); err != nil {
 		logger.Info("error converting Unstructured to Poll", "warning", err)
@@ -134,7 +145,7 @@ func countUsers(voters []Voter) int {
 
 // SlackOrder sends an order notification via Slack.
 func SlackOrder(input *v1beta1.Input, api *slack.Client, xr *resource.Composite, logger logging.Logger) {
-	pollTitle, _ := xr.Resource.GetString("spec.title")
+	pollTitle, _ = xr.Resource.GetString("spec.title")
 
 	poll := Poll{}
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(xr.Resource.Object, &poll); err != nil {
@@ -144,7 +155,7 @@ func SlackOrder(input *v1beta1.Input, api *slack.Client, xr *resource.Composite,
 
 	attachment := slack.Attachment{
 		Color:      "#f9a41b",
-		CallbackID: "meal",
+		CallbackID: pollTitle,
 		Title:      pollTitle,
 		TitleLink:  pollTitle,
 		Text:       "Total votes: " + strconv.Itoa(textContent),

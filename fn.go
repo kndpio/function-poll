@@ -28,10 +28,9 @@ type Function struct {
 }
 
 var (
-	deploymentName = os.Getenv("DEPLOYMENT_NAME")
-	token          = os.Getenv("SLACK_API_TOKEN")
-	channelID      = os.Getenv("SLACK_CHANEL_ID")
-	secretName     = os.Getenv("SECRET_NAME")
+	token      = os.Getenv("SLACK_API_TOKEN")
+	channelID  = os.Getenv("SLACK_CHANEL_ID")
+	secretName = os.Getenv("SECRET_NAME")
 )
 
 // Transform K8s resources into unstructured
@@ -41,7 +40,7 @@ func (f *Function) transformK8sResource(input *v1beta1.Input, logger logging.Log
 		"apiVersion": "kubernetes.crossplane.io/v1alpha1",
 		"kind":       "Object",
 		"metadata": map[string]interface{}{
-			"name": deploymentName,
+			"name": input.DeploymentName,
 		},
 		"spec": map[string]interface{}{
 			"forProvider": map[string]interface{}{
@@ -49,7 +48,7 @@ func (f *Function) transformK8sResource(input *v1beta1.Input, logger logging.Log
 					"apiVersion": "apps/v1",
 					"kind":       "Deployment",
 					"metadata": map[string]interface{}{
-						"name":      deploymentName,
+						"name":      input.DeploymentName,
 						"namespace": "default",
 					},
 					"spec": map[string]interface{}{
@@ -66,7 +65,7 @@ func (f *Function) transformK8sResource(input *v1beta1.Input, logger logging.Log
 								},
 							},
 							"spec": map[string]interface{}{
-								"serviceAccountName": input.DeploymentServiceAccount,
+								"serviceAccountName": input.DeploymentName,
 								"containers": []map[string]interface{}{
 									{
 										"name":  "poll-container",
@@ -91,14 +90,79 @@ func (f *Function) transformK8sResource(input *v1beta1.Input, logger logging.Log
 		},
 	}
 
-	unstructuredData := composed.Unstructured{}
-	unstructuredDataByte, err := json.Marshal(deploymentTemplate)
-	if err != nil {
-		logger.Info("error marshalling deployment template", "warning", err)
+	var clusterRole = map[string]interface{}{
+		"apiVersion": "rbac.authorization.k8s.io/v1",
+		"kind":       "ClusterRole",
+		"metadata": map[string]interface{}{
+			"name": "poll-cluster-role",
+		},
+		"rules": []interface{}{
+			map[string]interface{}{
+				"apiGroups": []interface{}{"apps"},
+				"resources": []interface{}{"deployments"},
+				"verbs":     []interface{}{"*"},
+			},
+			map[string]interface{}{
+				"apiGroups": []interface{}{"batch"},
+				"resources": []interface{}{"cronjobs"},
+				"verbs":     []interface{}{"*"},
+			},
+			map[string]interface{}{
+				"apiGroups": []interface{}{"networking.k8s.io"},
+				"resources": []interface{}{"ingresses"},
+				"verbs":     []interface{}{"*"},
+			},
+			map[string]interface{}{
+				"apiGroups": []interface{}{"kndp.io"},
+				"resources": []interface{}{"polls"},
+				"verbs":     []interface{}{"*"},
+			},
+			map[string]interface{}{
+				"apiGroups": []interface{}{"v1"},
+				"resources": []interface{}{"services"},
+				"verbs":     []interface{}{"*"},
+			},
+		},
 	}
-	err = json.Unmarshal(unstructuredDataByte, &unstructuredData)
-	if err != nil {
-		logger.Info("error unmarshalling deployment template", "warning", err)
+
+	var serviceAccount = map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "ServiceAccount",
+		"metadata": map[string]interface{}{
+			"name": input.DeploymentName,
+		},
+	}
+
+	var clusterRoleBinding = map[string]interface{}{
+		"apiVersion": "rbac.authorization.k8s.io/v1",
+		"kind":       "ClusterRoleBinding",
+		"metadata": map[string]interface{}{
+			"name": "poll-cluster-role-binding",
+		},
+		"subjects": []interface{}{
+			map[string]interface{}{
+				"kind":      "ServiceAccount",
+				"name":      input.DeploymentName,
+				"namespace": "default",
+			},
+		},
+		"roleRef": map[string]interface{}{
+			"kind":     "ClusterRole",
+			"name":     "poll-cluster-role",
+			"apiGroup": "rbac.authorization.k8s.io",
+		},
+	}
+
+	unstructuredData := composed.Unstructured{}
+	for _, resource := range []map[string]interface{}{clusterRole, serviceAccount, clusterRoleBinding, deploymentTemplate} {
+		unstructuredDataByte, err := json.Marshal(resource)
+		if err != nil {
+			logger.Info("error marshalling resource", "warning", err)
+		}
+		err = json.Unmarshal(unstructuredDataByte, &unstructuredData)
+		if err != nil {
+			logger.Info("error unmarshalling resource", "warning", err)
+		}
 	}
 
 	return unstructuredData

@@ -13,6 +13,5 @@ spec:
       name: function-template-go
     input:
       providerConfigRef: "default"
-      deploymentName: "collect"
-      deploymentServiceAccount: "default"
       deploymentImage: "ghcr.io/kndpio/kndp/slack-collector:0.1.0"
+      deploymentName: "collect"
