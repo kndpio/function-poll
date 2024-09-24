@@ -1,0 +1,55 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: polls.kndp.io
+spec:
+  group: kndp.io
+  names:
+    kind: Poll
+    plural: polls
+  versions:
+  - name: v1alpha1
+    served: true
+    referenceable: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              voters:
+                type: array
+                items:
+                  properties:
+                    name:
+                      type: string
+                    status:
+                      type: string
+                  type: object
+              dueOrderTime:
+                type: integer
+              dueTakeTime:
+                type: integer
+              deliveryTime:
+                type: integer
+              schedule:
+                type: string
+              title:
+                type: string
+              messages:
+                type: object
+                properties:
+                  question:
+                    type: string
+                  response:
+                    type: string
+                  result:
+                    type: string
+          status:
+            type: object
+            properties:
+              done:
+                type: boolean
+              lastNotificationTime:
+                type: integer

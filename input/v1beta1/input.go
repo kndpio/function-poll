@@ -22,12 +22,9 @@ type Input struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	SlackAPIToken            string `json:"slackAPIToken"`
-	SlackNotifyMessage       string `json:"slackNotifyMessage"`
-	SlackChanelID            string `json:"slackChanelID"`
-	ProviderConfigRef        string `json:"providerConfigRef"`
-	DeploymentName           string `json:"deploymentName"`
-	DeploymentServiceAccount string `json:"deploymentServiceAccount"`
-	DeploymentImage          string `json:"deploymentImage"`
-	ConfigMap                string `json:"configMap"`
+	ProviderConfigRef  string `json:"providerConfigRef"`
+	DeploymentName     string `json:"deploymentName"`
+	DeploymentImage    string `json:"deploymentImage"`
+	ServiceAccountName string `json:"serviceAccountName"`
+	CronJobImage       string `json:"cronJobImage"`
 }

@@ -1,0 +1,56 @@
+name: Builder
+on:
+  push:
+    branches:
+    - main
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-and-pack:
+    name: Build and pack
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+    - name: CR authentication
+      uses: docker/login-action@v2
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Checkout
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 2
+    - name: Configure Git
+      run: |
+        git config user.name "$GITHUB_ACTOR"
+        git config user.email "$GITHUB_ACTOR@github.com"
+
+    - name: Get Short GitHub SHA and Save in Environment Variable
+      run: echo "SHORT_GITHUB_SHA=$(git rev-parse --short=5 HEAD)" >> $GITHUB_ENV
+
+    - name: Setup the Crossplane CLI
+      run: "curl -sL https://raw.githubusercontent.com/crossplane/crossplane/master/install.sh | sh"
+
+    - name: Build and push slack-collector
+      run: docker build -f internal/slack-collector/Dockerfile . -t ${REGISTRY}/${{ github.repository }}/slack-collector:${SHORT_GITHUB_SHA} && docker push ${REGISTRY}/${{ github.repository }}/slack-collector:${SHORT_GITHUB_SHA}
+
+    - name: Build and push slack-notify
+      run: docker build -f internal/slack-notify/Dockerfile . -t ${REGISTRY}/${{ github.repository }}/slack-notify:${SHORT_GITHUB_SHA} && docker push ${REGISTRY}/${{ github.repository }}/slack-notify:${SHORT_GITHUB_SHA}
+
+    - name: Build function image
+      run: docker build . -t ${REGISTRY}/${{ github.repository }}:${SHORT_GITHUB_SHA}
+
+    - name: Build ans push Package
+      run: ./crossplane xpkg build --package-file=function-poll.xpkg --package-root=package/ --embed-runtime-image=${REGISTRY}/${{ github.repository }}:${SHORT_GITHUB_SHA} && ./crossplane xpkg push -f function-poll.xpkg ${REGISTRY}/${{ github.repository }}:${SHORT_GITHUB_SHA}
+    

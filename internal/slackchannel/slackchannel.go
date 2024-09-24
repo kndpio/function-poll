@@ -2,6 +2,7 @@
 package slackchannel
 
 import (
+	"os"
 	"strconv"
 	"strings"
 
@@ -14,23 +15,41 @@ import (
 	"github.com/crossplane/function-template-go/input/v1beta1"
 )
 
-// Poll type
+var (
+	channelId = os.Getenv("SLACK_CHANEL_ID")
+	pollTitle string
+)
+
+// Voter represents the structure of an Voter reference.
+type Voter struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+// Message represents the structure of a message.
+type Message struct {
+	Question string `json:"question"`
+	Response string `json:"response"`
+	Result   string `json:"result"`
+}
+
+// Poll represents the structure of a poll.
 type Poll struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 	Spec              struct {
-		DeliveryTime string  `json:"deliveryTime"`
-		DueOrderTime string  `json:"dueOrderTime"`
-		DueTakeTime  string  `json:"dueTakeTime"`
+		DeliveryTime int64   `json:"deliveryTime"`
+		DueOrderTime int64   `json:"dueOrderTime"`
+		DueTakeTime  int64   `json:"dueTakeTime"`
+		Schedule     string  `json:"schedule"`
 		Voters       []Voter `json:"voters"`
-		Status       string  `json:"status"`
+		Title        string  `json:"title"`
+		Messages     Message `json:"messages"`
 	} `json:"spec"`
-}
-
-// Voter type
-type Voter struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
+	Status struct {
+		Done                 bool  `json:"done"`
+		LastNotificationTime int64 `json:"lastNotificationTime"`
+	} `json:"status"`
 }
 
 // UserVoted checks if the user should receive a message based on status
@@ -64,59 +83,6 @@ func ProcessSlackMembers(api *slack.Client, channelID string, logger logging.Log
 	return realUsers, nil
 }
 
-// SendSlackMessage is for sending messages to users in slack
-func SendSlackMessage(xr *resource.Composite, api *slack.Client, channelID string, slackNotifyMessage string, logger logging.Logger) {
-	members, _, err := api.GetUsersInConversation(&slack.GetUsersInConversationParameters{
-		ChannelID: channelID,
-	})
-	if err != nil {
-		logger.Info("error getting conversation members", "warning", err)
-	}
-
-	logger.Debug("conversation members:", members)
-	pollName, _ := xr.Resource.GetString("metadata.name")
-	pollTitle, _ := xr.Resource.GetString("spec.title")
-	poll := Poll{}
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(xr.Resource.Object, &poll); err != nil {
-		logger.Info("error converting Unstructured to Poll", "warning", err)
-	}
-
-	for _, memberID := range members {
-		userInfo, err := api.GetUserInfo(memberID)
-		if err != nil {
-			logger.Info("error getting user info for", memberID, err)
-			continue
-		}
-
-		attachment := slack.Attachment{
-			Color:      "#f9a41b",
-			CallbackID: pollName,
-			Title:      pollTitle,
-			TitleLink:  pollTitle,
-			Text:       slackNotifyMessage,
-			Fields:     []slack.AttachmentField{},
-			Actions:    []slack.AttachmentAction{{Name: "actionSelect", Type: "select", Options: []slack.AttachmentActionOption{{Text: "Yes", Value: "Yes"}, {Text: "No", Value: "No"}}}, {Name: "actionCancel", Text: "Cancel", Type: "button", Style: "danger"}},
-			MarkdownIn: []string{},
-			Blocks:     slack.Blocks{},
-		}
-
-		if UserVoted(poll.Spec.Voters, userInfo.Name) {
-			channelID, _, err := api.PostMessage(
-				userInfo.ID,
-				slack.MsgOptionText("", true),
-				slack.MsgOptionAttachments(attachment),
-				slack.MsgOptionAsUser(true),
-			)
-			if err != nil {
-				logger.Info("error sending message to user: ", userInfo.Name, userInfo.ID, err)
-			} else {
-				logger.Debug("message sent to user in channel: \n", userInfo.Name, userInfo.ID, channelID)
-			}
-
-		}
-	}
-}
-
 func countUsers(voters []Voter) int {
 	count := 0
 	for _, voter := range voters {
@@ -128,8 +94,8 @@ func countUsers(voters []Voter) int {
 }
 
 // SlackOrder sends an order notification via Slack.
-func SlackOrder(input *v1beta1.Input, api *slack.Client, xr *resource.Composite, logger logging.Logger) {
-	pollTitle, _ := xr.Resource.GetString("spec.title")
+func SlackOrder(input *v1beta1.Input, api *slack.Client, xr *resource.Composite, logger logging.Logger, resultText string) *resource.Composite {
+	pollTitle, _ = xr.Resource.GetString("spec.title")
 
 	poll := Poll{}
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(xr.Resource.Object, &poll); err != nil {
@@ -139,23 +105,29 @@ func SlackOrder(input *v1beta1.Input, api *slack.Client, xr *resource.Composite,
 
 	attachment := slack.Attachment{
 		Color:      "#f9a41b",
-		CallbackID: "meal",
+		CallbackID: pollTitle,
 		Title:      pollTitle,
 		TitleLink:  pollTitle,
-		Text:       "Total votes: " + strconv.Itoa(textContent),
+		Text:       resultText + strconv.Itoa(textContent),
 		MarkdownIn: []string{},
 	}
 
 	channelID, timestamp, err := api.PostMessage(
-		input.SlackChanelID,
+		channelId,
 		slack.MsgOptionText("", false),
 		slack.MsgOptionAttachments(attachment),
 		slack.MsgOptionAsUser(true),
 	)
+
 	if err != nil {
 		logger.Info("error sending slack message", "warning", err)
 	} else {
 		logger.Info("message successfully sent to channel", channelID, timestamp)
 	}
-
+	poll.Spec.Voters = nil
+	xr.Resource.Object, err = runtime.DefaultUnstructuredConverter.ToUnstructured(&poll)
+	if err != nil {
+		logger.Info("error converting Poll to Unstructured:", err)
+	}
+	return xr
 }

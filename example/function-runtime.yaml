@@ -1,0 +1,20 @@
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: poll-function-runtime
+spec:
+  deploymentTemplate:
+    spec:
+      selector:
+        matchLabels:
+          app: poll-app
+      template:
+        metadata:
+          labels:
+            app: poll-app
+        spec:
+          containers:
+          - name: package-runtime
+            envFrom:
+              - secretRef:
+                  name: poll-secret

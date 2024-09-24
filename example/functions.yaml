@@ -5,7 +5,9 @@ metadata:
   name: function-template-go
   annotations:
     # This tells crossplane beta render to connect to the function locally.
-    render.crossplane.io/runtime: Development
+    # render.crossplane.io/runtime: Development
 spec:
   # This is ignored when using the Development runtime.
-  package: function-template-go
+  package: ghcr.io/kndpio/function-poll:d7a4b
+  runtimeConfigRef:
+    name: poll-function-runtime

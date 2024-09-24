@@ -1,0 +1,45 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: poll-cluster-role
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["*"]
+- apiGroups: ["batch"]
+  resources: ["cronjobs"]
+  verbs: ["*"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["*"]
+- apiGroups: ["kndp.io"]
+  resources: ["polls"]
+  verbs: ["*"]
+- apiGroups: ["kndp.io"]
+  resources: ["polls/status"]
+  verbs: ["*"]
+- apiGroups: ["v1"]
+  resources: ["services"]
+  verbs: ["*"]
+
+---
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: slack-collector
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: poll-cluster-role-binding
+subjects:
+- kind: ServiceAccount
+  name: slack-collector
+  namespace: default
+roleRef:
+  kind: ClusterRole
+  name: poll-cluster-role
+  apiGroup: rbac.authorization.k8s.io
