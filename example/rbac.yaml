@@ -13,7 +13,10 @@ rules:
   resources: ["ingresses"]
   verbs: ["*"]
 - apiGroups: ["kndp.io"]
-  resources: ["meals"]
+  resources: ["polls"]
+  verbs: ["*"]
+- apiGroups: ["kndp.io"]
+  resources: ["polls/status"]
   verbs: ["*"]
 - apiGroups: ["v1"]
   resources: ["services"]
@@ -24,7 +27,7 @@ rules:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: poll-sa
+  name: slack-collector
 
 ---
 
@@ -34,7 +37,7 @@ metadata:
   name: poll-cluster-role-binding
 subjects:
 - kind: ServiceAccount
-  name: poll-sa
+  name: slack-collector
   namespace: default
 roleRef:
   kind: ClusterRole

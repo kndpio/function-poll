@@ -3,9 +3,6 @@ kind: DeploymentRuntimeConfig
 metadata:
   name: poll-function-runtime
 spec:
-  serviceAccountTemplate:
-    metadata:
-      name: poll-sa
   deploymentTemplate:
     spec:
       selector:

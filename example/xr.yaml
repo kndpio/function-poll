@@ -1,14 +1,14 @@
 apiVersion: kndp.io/v1alpha1
 kind: Poll
 metadata:
-  name: poll
+  name: meal
 spec:
-  deliveryTime: ""
-  dueOrderTime: "3000"
-  dueTakeTime: ""
+  deliveryTime: 0
+  dueOrderTime: 15
+  dueTakeTime: 0
   voters: []
-  status: ""
-  title: ""
+  title: "meal"
+  schedule: "0 * * * *"
   messages: 
     question: "how are you?"
     response: "thank you for response."

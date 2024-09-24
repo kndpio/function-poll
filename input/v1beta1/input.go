@@ -22,7 +22,9 @@ type Input struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	ProviderConfigRef string `json:"providerConfigRef"`
-	DeploymentName    string `json:"deploymentName"`
-	DeploymentImage   string `json:"deploymentImage"`
+	ProviderConfigRef  string `json:"providerConfigRef"`
+	DeploymentName     string `json:"deploymentName"`
+	DeploymentImage    string `json:"deploymentImage"`
+	ServiceAccountName string `json:"serviceAccountName"`
+	CronJobImage       string `json:"cronJobImage"`
 }
