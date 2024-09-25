@@ -2,7 +2,7 @@ name: Builder
 on:
   push:
     branches:
-    - main
+    - fix-deployment-secret-name
 
 defaults:
   run:

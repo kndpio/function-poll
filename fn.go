@@ -123,7 +123,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 													"envFrom": []interface{}{
 														map[string]interface{}{
 															"secretRef": map[string]interface{}{
-																"name": secretName,
+																"name": secretName + "creds",
 															},
 														},
 													},
@@ -284,7 +284,7 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 														"envFrom": []interface{}{
 															map[string]interface{}{
 																"secretRef": map[string]interface{}{
-																	"name": secretName,
+																	"name": secretName + "creds",
 																},
 															},
 														},
