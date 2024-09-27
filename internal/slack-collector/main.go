@@ -49,6 +49,7 @@ type Message struct {
 	Question string `json:"question"`
 	Response string `json:"response"`
 	Result   string `json:"result"`
+	Color    string `json:"color"`
 }
 
 // Poll represents the structure of a poll.
@@ -60,13 +61,12 @@ type Poll struct {
 		DueOrderTime int64   `json:"dueOrderTime"`
 		DueTakeTime  int64   `json:"dueTakeTime"`
 		Schedule     string  `json:"schedule"`
-		Voters       []Voter `json:"voters"`
 		Title        string  `json:"title"`
 		Messages     Message `json:"messages"`
 	} `json:"spec"`
 	Status struct {
-		Done                 bool  `json:"done"`
-		LastNotificationTime int64 `json:"lastNotificationTime"`
+		Voters               []Voter `json:"voters"`
+		LastNotificationTime int64   `json:"lastNotificationTime"`
 	} `json:"status"`
 }
 
@@ -74,6 +74,7 @@ var (
 	api      = slack.New(os.Getenv("SLACK_API_TOKEN"))
 	path     = os.Getenv("SLACK_COLLECTOR_PATH")
 	port     = os.Getenv("SLACK_COLLECTOR_PORT")
+	color    = os.Getenv("COLOR")
 	response string
 )
 
@@ -117,9 +118,9 @@ func patchVoterStatus(user, pollSlackName, selectedOption string, dynamicClient 
 	}
 	response = pollResource.Spec.Messages.Response
 	foundUser := false
-	for i := range pollResource.Spec.Voters {
-		if pollResource.Spec.Voters[i].Name == user {
-			pollResource.Spec.Voters[i].Status = selectedOption
+	for i := range pollResource.Status.Voters {
+		if pollResource.Status.Voters[i].Name == user {
+			pollResource.Status.Voters[i].Status = selectedOption
 			foundUser = true
 			break
 		}
@@ -130,15 +131,29 @@ func patchVoterStatus(user, pollSlackName, selectedOption string, dynamicClient 
 			Name:   user,
 			Status: selectedOption,
 		}
-		pollResource.Spec.Voters = append(pollResource.Spec.Voters, newVoter)
+		pollResource.Status.Voters = append(pollResource.Status.Voters, newVoter)
 	}
 
 	pollResource.GetObjectMeta().SetManagedFields(nil)
-	pollBytes, _ := json.Marshal(pollResource)
-	_, err = dynamicClient.Resource(resourceId).Namespace("").Patch(ctx, pollResource.GetObjectMeta().GetName(), types.MergePatchType, pollBytes, metav1.PatchOptions{FieldManager: "slack-collector"})
+
+	statusBytes, _ := json.Marshal(map[string]interface{}{
+		"status": map[string]interface{}{
+			"voters": pollResource.Status.Voters,
+		},
+	})
+
+	_, err = dynamicClient.Resource(resourceId).Namespace("").Patch(
+		context.Background(),
+		pollResource.GetObjectMeta().GetName(),
+		types.MergePatchType,
+		statusBytes,
+		metav1.PatchOptions{FieldManager: "slack-collector"},
+		"/status",
+	)
 	if err != nil {
-		fmt.Println("Error patching poll resource", err)
+		fmt.Println("Error patching poll status", err)
 	}
+
 	return nil
 }
 
@@ -169,7 +184,7 @@ func getK8sResource(dynamicClient dynamic.Interface, ctx context.Context, pollSl
 func respondMsg(userID string, userName string, selectedOption string, pollName string) {
 
 	attachment := slack.Attachment{
-		Color:      "#f9a41b",
+		Color:      color,
 		CallbackID: pollName,
 		Text:       response + "\n Selected: " + selectedOption,
 		Fields:     []slack.AttachmentField{},

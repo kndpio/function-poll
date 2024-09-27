@@ -17,5 +17,6 @@ spec:
       providerConfigRef: "kndp-kubernetes-provider-config"
       deploymentImage: "ghcr.io/kndpio/function-poll/slack-collector:d7a4b"
       cronJobImage: "ghcr.io/kndpio/function-poll/slack-notify:d7a4b"
+      jobImage: "ghcr.io/kndpio/function-poll/slack-order:d7a4b"
       deploymentName: "slack-collector"
       serviceAccountName: "slack-collector"

@@ -18,15 +18,6 @@ spec:
           spec:
             type: object
             properties:
-              voters:
-                type: array
-                items:
-                  properties:
-                    name:
-                      type: string
-                    status:
-                      type: string
-                  type: object
               dueOrderTime:
                 type: integer
               dueTakeTime:
@@ -46,10 +37,19 @@ spec:
                     type: string
                   result:
                     type: string
+                  color:
+                    type: string
           status:
             type: object
             properties:
-              done:
-                type: boolean
+              voters:
+                type: array
+                items:
+                  properties:
+                    name:
+                      type: string
+                    status:
+                      type: string
+                  type: object
               lastNotificationTime:
                 type: integer

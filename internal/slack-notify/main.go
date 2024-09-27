@@ -22,6 +22,7 @@ var (
 	pollName           = os.Getenv("POLL_NAME")
 	pollTitle          = os.Getenv("POLL_TITLE")
 	slackNotifyMessage = os.Getenv("SLACK_NOTIFY_MESSAGE")
+	color              = os.Getenv("COLOR")
 )
 
 // Voter represents the structure of an Voter reference.
@@ -35,6 +36,7 @@ type Message struct {
 	Question string `json:"question"`
 	Response string `json:"response"`
 	Result   string `json:"result"`
+	Color    string `json:"color"`
 }
 
 // Poll represents the structure of a poll.
@@ -46,13 +48,12 @@ type Poll struct {
 		DueOrderTime int64   `json:"dueOrderTime"`
 		DueTakeTime  int64   `json:"dueTakeTime"`
 		Schedule     string  `json:"schedule"`
-		Voters       []Voter `json:"voters"`
 		Title        string  `json:"title"`
 		Messages     Message `json:"messages"`
 	} `json:"spec"`
 	Status struct {
-		Done                 bool  `json:"done"`
-		LastNotificationTime int64 `json:"lastNotificationTime"`
+		Voters               []Voter `json:"voters"`
+		LastNotificationTime int64   `json:"lastNotificationTime"`
 	} `json:"status"`
 }
 
@@ -101,18 +102,16 @@ func main() {
 
 	statusBytes, _ := json.Marshal(map[string]interface{}{
 		"status": map[string]interface{}{
-			"done":                 false,
 			"lastNotificationTime": time.Now().Unix(),
 		},
 	})
 
-	// Use the "/status" subresource to update just the status
 	_, err = client.Resource(resourceId).Namespace("").Patch(
 		context.Background(),
 		pollResource.GetObjectMeta().GetName(),
 		types.MergePatchType,
 		statusBytes,
-		metav1.PatchOptions{FieldManager: "slack-collector"},
+		metav1.PatchOptions{FieldManager: "slack-notify"},
 		"/status",
 	)
 	if err != nil {
@@ -136,7 +135,7 @@ func main() {
 		}
 
 		attachment := slack.Attachment{
-			Color:      "#f9a41b",
+			Color:      color,
 			CallbackID: pollName,
 			Title:      pollTitle,
 			TitleLink:  pollTitle,

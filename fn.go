@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/slack-go/slack"
@@ -59,7 +61,6 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 	desired, _ := request.GetDesiredComposedResources(req)
 
 	rsp := response.To(req, response.DefaultTTL)
-
 	xr, _ := request.GetObservedCompositeResource(req)
 	users, err := slackchannel.ProcessSlackMembers(api, channelID, f.log)
 	if err != nil {
@@ -69,17 +70,88 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 	pollName, _ := xr.Resource.GetString("metadata.name")
 	schedule, _ := xr.Resource.GetString("spec.schedule")
 	question, _ := xr.Resource.GetString("spec.messages.question")
-	d, _ := xr.Resource.GetBool("status.done")
 	resultText, _ := xr.Resource.GetString("spec.messages.result")
+	color, _ := xr.Resource.GetString("spec.messages.color")
+	votersDetails, _ := xr.Resource.GetValue("status.voters")
+	votersJSON, _ := json.Marshal(votersDetails)
+	votersString := string(votersJSON)
 
 	if checkDueOrderTimeAndVoteCount(xr, currentTimestamp, users) {
-		if !d {
-			xr.Resource.SetBool("status.done", true)
-			slackchannel.SlackOrder(input, api, xr, f.log, resultText)
+		_, results := slackchannel.PatchVoters(xr, f.log)
+		job := composed.Unstructured{
+			Unstructured: unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"apiVersion": "kubernetes.crossplane.io/v1alpha2",
+					"kind":       "Object",
+					"metadata": map[string]interface{}{
+						"name": "slack-notify-job",
+					},
+					"spec": map[string]interface{}{
+						"forProvider": map[string]interface{}{
+							"manifest": map[string]interface{}{
+								"apiVersion": "batch/v1",
+								"kind":       "Job",
+								"metadata": map[string]interface{}{
+									"name":      "slack-notify-job",
+									"namespace": "default",
+								},
+								"spec": map[string]interface{}{
+									"template": map[string]interface{}{
+										"spec": map[string]interface{}{
+											"restartPolicy":      "OnFailure",
+											"serviceAccountName": input.ServiceAccountName,
+											"containers": []interface{}{
+												map[string]interface{}{
+													"name":  "poll-container",
+													"image": input.JobImage,
+													"env": []interface{}{
+														map[string]interface{}{
+															"name":  "RESULT_TEXT",
+															"value": resultText,
+														},
+														map[string]interface{}{
+															"name":  "RESULTS",
+															"value": strconv.Itoa(results),
+														},
+														map[string]interface{}{
+															"name":  "POLL_NAME",
+															"value": pollName,
+														},
+														map[string]interface{}{
+															"name":  "POLL_TITLE",
+															"value": pollTitle,
+														},
+														map[string]interface{}{
+															"name":  "POLL_VOTERS_DETAILS",
+															"value": votersString,
+														},
+														map[string]interface{}{
+															"name":  "COLOR",
+															"value": color,
+														},
+													},
+													"envFrom": []interface{}{
+														map[string]interface{}{
+															"secretRef": map[string]interface{}{
+																"name": secretName,
+															},
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+						"providerConfigRef": map[string]interface{}{"name": input.ProviderConfigRef},
+					},
+				},
+			},
 		}
+		desired[resource.Name(job.GetName())] = &resource.DesiredComposed{Resource: &job}
 		xr.Resource.SetManagedFields(nil)
 		response.SetDesiredCompositeResource(rsp, xr)
-
 	} else {
 		xr.Resource.SetManagedFields(nil)
 		response.SetDesiredCompositeResource(rsp, xr)
@@ -120,10 +192,16 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 												map[string]interface{}{
 													"name":  "poll-container",
 													"image": input.DeploymentImage,
+													"env": []interface{}{
+														map[string]interface{}{
+															"name":  "COLOR",
+															"value": color,
+														},
+													},
 													"envFrom": []interface{}{
 														map[string]interface{}{
 															"secretRef": map[string]interface{}{
-																"name": secretName + "creds",
+																"name": secretName,
 															},
 														},
 													},
@@ -280,11 +358,15 @@ func (f *Function) RunFunction(_ context.Context, req *fnv1beta1.RunFunctionRequ
 																"name":  "POLL_TITLE",
 																"value": pollTitle,
 															},
+															map[string]interface{}{
+																"name":  "COLOR",
+																"value": color,
+															},
 														},
 														"envFrom": []interface{}{
 															map[string]interface{}{
 																"secretRef": map[string]interface{}{
-																	"name": secretName + "creds",
+																	"name": secretName,
 																},
 															},
 														},
