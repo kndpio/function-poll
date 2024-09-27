@@ -48,6 +48,9 @@ jobs:
     - name: Build and push slack-notify
       run: docker build -f internal/slack-notify/Dockerfile . -t ${REGISTRY}/${{ github.repository }}/slack-notify:${SHORT_GITHUB_SHA} && docker push ${REGISTRY}/${{ github.repository }}/slack-notify:${SHORT_GITHUB_SHA}
 
+    - name: Build and push slack-order
+      run: docker build -f internal/slack-order/Dockerfile . -t ${REGISTRY}/${{ github.repository }}/slack-order:${SHORT_GITHUB_SHA} && docker push ${REGISTRY}/${{ github.repository }}/slack-order:${SHORT_GITHUB_SHA}
+
     - name: Build function image
       run: docker build . -t ${REGISTRY}/${{ github.repository }}:${SHORT_GITHUB_SHA}
 

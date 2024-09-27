@@ -4,12 +4,14 @@ metadata:
   name: meal
 spec:
   deliveryTime: 0
-  dueOrderTime: 15
+  dueOrderTime: 20
   dueTakeTime: 0
-  voters: []
   title: "meal"
-  schedule: "0 * * * *"
-  messages: 
+  schedule: "49 14 * * *"
+  messages:
     question: "how are you?"
     response: "thank you for response."
     result:  "here are the voting results:"
+    color: "#cfd1d0"
+status:
+  lastNotificationTime: 1

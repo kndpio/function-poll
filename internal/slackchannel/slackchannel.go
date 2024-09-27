@@ -2,8 +2,6 @@
 package slackchannel
 
 import (
-	"os"
-	"strconv"
 	"strings"
 
 	"github.com/slack-go/slack"
@@ -12,12 +10,6 @@ import (
 
 	"github.com/crossplane/function-sdk-go/logging"
 	"github.com/crossplane/function-sdk-go/resource"
-	"github.com/crossplane/function-template-go/input/v1beta1"
-)
-
-var (
-	channelId = os.Getenv("SLACK_CHANEL_ID")
-	pollTitle string
 )
 
 // Voter represents the structure of an Voter reference.
@@ -31,6 +23,7 @@ type Message struct {
 	Question string `json:"question"`
 	Response string `json:"response"`
 	Result   string `json:"result"`
+	Color    string `json:"color"`
 }
 
 // Poll represents the structure of a poll.
@@ -42,24 +35,23 @@ type Poll struct {
 		DueOrderTime int64   `json:"dueOrderTime"`
 		DueTakeTime  int64   `json:"dueTakeTime"`
 		Schedule     string  `json:"schedule"`
-		Voters       []Voter `json:"voters"`
 		Title        string  `json:"title"`
 		Messages     Message `json:"messages"`
 	} `json:"spec"`
 	Status struct {
-		Done                 bool  `json:"done"`
-		LastNotificationTime int64 `json:"lastNotificationTime"`
+		Voters               []Voter `json:"voters"`
+		LastNotificationTime int64   `json:"lastNotificationTime"`
 	} `json:"status"`
 }
 
-// UserVoted checks if the user should receive a message based on status
-func UserVoted(voters []Voter, userName string) bool {
-	for _, Voter := range voters {
-		if Voter.Name == userName {
-			return Voter.Status == ""
+func countUsers(voters []Voter) int {
+	count := 0
+	for _, voter := range voters {
+		if strings.EqualFold(voter.Status, "yes") {
+			count++
 		}
 	}
-	return true
+	return count
 }
 
 // ProcessSlackMembers gets and process slack members
@@ -83,51 +75,14 @@ func ProcessSlackMembers(api *slack.Client, channelID string, logger logging.Log
 	return realUsers, nil
 }
 
-func countUsers(voters []Voter) int {
-	count := 0
-	for _, voter := range voters {
-		if strings.EqualFold(voter.Status, "yes") {
-			count++
-		}
-	}
-	return count
-}
-
-// SlackOrder sends an order notification via Slack.
-func SlackOrder(input *v1beta1.Input, api *slack.Client, xr *resource.Composite, logger logging.Logger, resultText string) *resource.Composite {
-	pollTitle, _ = xr.Resource.GetString("spec.title")
-
+// PatchVoters patch status.voters key with an empty array.
+func PatchVoters(xr *resource.Composite, logger logging.Logger) (*resource.Composite, int) {
 	poll := Poll{}
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(xr.Resource.Object, &poll); err != nil {
 		logger.Info("error converting Unstructured to Poll:", err)
 	}
-	textContent := countUsers(poll.Spec.Voters)
-
-	attachment := slack.Attachment{
-		Color:      "#f9a41b",
-		CallbackID: pollTitle,
-		Title:      pollTitle,
-		TitleLink:  pollTitle,
-		Text:       resultText + strconv.Itoa(textContent),
-		MarkdownIn: []string{},
-	}
-
-	channelID, timestamp, err := api.PostMessage(
-		channelId,
-		slack.MsgOptionText("", false),
-		slack.MsgOptionAttachments(attachment),
-		slack.MsgOptionAsUser(true),
-	)
-
-	if err != nil {
-		logger.Info("error sending slack message", "warning", err)
-	} else {
-		logger.Info("message successfully sent to channel", channelID, timestamp)
-	}
-	poll.Spec.Voters = nil
-	xr.Resource.Object, err = runtime.DefaultUnstructuredConverter.ToUnstructured(&poll)
-	if err != nil {
-		logger.Info("error converting Poll to Unstructured:", err)
-	}
-	return xr
+	voters := countUsers(poll.Status.Voters)
+	poll.Status.Voters = []Voter{}
+	xr.Resource.Object, _ = runtime.DefaultUnstructuredConverter.ToUnstructured(&poll)
+	return xr, voters
 }

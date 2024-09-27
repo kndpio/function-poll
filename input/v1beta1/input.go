@@ -27,4 +27,5 @@ type Input struct {
 	DeploymentImage    string `json:"deploymentImage"`
 	ServiceAccountName string `json:"serviceAccountName"`
 	CronJobImage       string `json:"cronJobImage"`
+	JobImage           string `json:"jobImage"`
 }
